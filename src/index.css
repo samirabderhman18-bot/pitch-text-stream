@@ -41,6 +41,7 @@ All colors MUST be HSL.
     --pitch-green: 142 76% 36%;
     --goal-post: 0 0% 100%;
     --live-red: 0 84.2% 60.2%;
+    --yellow-card: 45 93% 47%;
 
     --sidebar-background: 0 0% 98%;
 
@@ -91,6 +92,7 @@ All colors MUST be HSL.
     --pitch-green: 142 76% 45%;
     --goal-post: 0 0% 100%;
     --live-red: 0 84.2% 60.2%;
+    --yellow-card: 45 93% 47%;
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
