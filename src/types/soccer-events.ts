@@ -14,11 +14,22 @@ export type SoccerEventType =
   | 'TACKLE'
   | 'INTERCEPTION';
 
+export type RecognitionProtocol =
+  | 'Player A — Event — Player B'
+  | 'Player — Event'
+  | 'Team — Event'
+  | 'Referee — Event — Player';
+
 export interface SoccerEvent {
   type: SoccerEventType;
   timestamp: number;
   text: string;
   confidence: number;
+  protocolType: RecognitionProtocol;
+  playerA?: string;
+  playerB?: string;
+  team?: string;
+  referee?: string;
 }
 
 export const EVENT_KEYWORDS: Record<SoccerEventType, string[]> = {
