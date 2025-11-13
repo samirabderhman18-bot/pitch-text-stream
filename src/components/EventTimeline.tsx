@@ -2,13 +2,53 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { SoccerEvent, EVENT_COLORS } from '@/types/soccer-events';
-import { Clock } from 'lucide-react';
+import { Clock, User, Users, Shield, Gavel } from 'lucide-react';
 
 interface EventTimelineProps {
   events: SoccerEvent[];
 }
 
 const EventTimeline = ({ events }: EventTimelineProps) => {
+  const renderEventContent = (event: SoccerEvent) => {
+    switch (event.protocolType) {
+      case 'Player A — Event — Player B':
+        return (
+          <div className="flex items-center gap-2 text-sm">
+            <User className="w-4 h-4 text-primary" />
+            <span className="font-semibold">{event.playerA}</span>
+            <span className="text-muted-foreground">→</span>
+            <span className="font-semibold">{event.playerB}</span>
+          </div>
+        );
+      case 'Player — Event':
+        return (
+          <div className="flex items-center gap-2 text-sm">
+            <User className="w-4 h-4 text-primary" />
+            <span className="font-semibold">{event.playerA}</span>
+          </div>
+        );
+      case 'Team — Event':
+        return (
+          <div className="flex items-center gap-2 text-sm">
+            <Users className="w-4 h-4 text-primary" />
+            <span className="font-semibold">{event.team}</span>
+          </div>
+        );
+      case 'Referee — Event — Player':
+        return (
+          <div className="flex items-center gap-2 text-sm">
+            <Gavel className="w-4 h-4 text-destructive" />
+            <span className="font-semibold">{event.referee}</span>
+            <span className="text-muted-foreground">to</span>
+            <User className="w-4 h-4 text-primary" />
+            <span className="font-semibold">{event.playerA}</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -24,7 +64,7 @@ const EventTimeline = ({ events }: EventTimelineProps) => {
               {events.map((event, index) => (
                 <div
                   key={index}
-                  className="flex flex-col gap-2 p-3 rounded-lg border bg-card hover:bg-accent/5 transition-colors"
+                  className="flex flex-col gap-3 p-3 rounded-lg border bg-card hover:bg-accent/5 transition-colors"
                 >
                   <div className="flex items-center justify-between">
                     <Badge
@@ -37,7 +77,8 @@ const EventTimeline = ({ events }: EventTimelineProps) => {
                       {new Date(event.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
-                  <p className="text-sm text-foreground leading-relaxed">
+                  {renderEventContent(event)}
+                  <p className="text-sm text-foreground/80 leading-relaxed mt-1">
                     {event.text}
                   </p>
                 </div>
