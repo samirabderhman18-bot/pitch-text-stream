@@ -60,6 +60,8 @@ export default {
         "pitch-green": "hsl(var(--pitch-green))",
         "goal-post": "hsl(var(--goal-post))",
         "live-red": "hsl(var(--live-red))",
+        "yellow-500": "hsl(var(--yellow-card))",
+        "yellow-700": "hsl(45 93% 35%)",
       },
       borderRadius: {
         lg: "var(--radius)",

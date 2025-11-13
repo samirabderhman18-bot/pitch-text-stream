@@ -1,14 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AudioRecorder from '@/components/AudioRecorder';
 import TranscriptionDisplay from '@/components/TranscriptionDisplay';
+import EventTimeline from '@/components/EventTimeline';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { detectEvents } from '@/utils/event-detector';
+import { SoccerEvent } from '@/types/soccer-events';
 
 const Index = () => {
   const [transcription, setTranscription] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState('');
+  const [events, setEvents] = useState<SoccerEvent[]>([]);
   const { toast } = useToast();
+
+  // Detect events whenever transcription changes
+  useEffect(() => {
+    if (transcription) {
+      const detectedEvents = detectEvents(transcription);
+      setEvents(detectedEvents);
+    }
+  }, [transcription]);
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
@@ -106,11 +118,14 @@ const Index = () => {
             <AudioRecorder onRecordingComplete={handleRecordingComplete} />
           </div>
 
-          <TranscriptionDisplay
-            transcription={transcription}
-            isLoading={isProcessing}
-            status={status}
-          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <TranscriptionDisplay
+              transcription={transcription}
+              isLoading={isProcessing}
+              status={status}
+            />
+            <EventTimeline events={events} />
+          </div>
         </div>
       </div>
     </div>
