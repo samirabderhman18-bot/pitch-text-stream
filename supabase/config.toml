@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.get-transcript]
 verify_jwt = false
+
+[functions.transcribe-huggingface]
+verify_jwt = false
