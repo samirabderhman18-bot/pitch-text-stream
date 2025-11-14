@@ -16,7 +16,7 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
   const { toast } = useToast();
 
   const processAudioChunk = () => {
-    if (chunksRef.current.length > 0) {
+    if (chunksRef.current.length > 0 && !isProcessing) {
       const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
       onRecordingComplete(audioBlob);
       chunksRef.current = [];
@@ -33,7 +33,6 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
-          processAudioChunk(); // Process chunk immediately
         }
       };
 
@@ -41,8 +40,8 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
         stream.getTracks().forEach(track => track.stop());
       };
 
-      // Record in 5-second chunks
-      mediaRecorder.start(5000);
+      // Record in 3-second chunks
+      mediaRecorder.start(3000);
       setIsRecording(true);
       const modeLabel = mode === 'browser' ? 'Browser Whisper' : mode === 'huggingface' ? 'HuggingFace Whisper' : 'Assembly AI';
       toast({
@@ -68,11 +67,19 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
     }
   };
 
-  // Automatically restart recording after processing
+  // Process chunks every 3 seconds automatically
   useEffect(() => {
-    if (isRecording && !isProcessing && mediaRecorderRef.current?.state === 'inactive') {
-      mediaRecorderRef.current.start(5000);
+    let interval: NodeJS.Timeout;
+    
+    if (isRecording && !isProcessing) {
+      interval = setInterval(() => {
+        processAudioChunk();
+      }, 3000);
     }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [isRecording, isProcessing]);
 
   return (
