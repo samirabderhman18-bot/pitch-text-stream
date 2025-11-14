@@ -91,7 +91,7 @@ const Index = () => {
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-    addLog('Processing audio with hybrid system...', 'processing');
+          addLog('Processing audio with AssemblyAI system...', 'processing');
     setStatus('Processing audio...');
 
     try {
@@ -109,7 +109,7 @@ const Index = () => {
       // Estimate audio duration (3 second chunks)
       const audioDuration = 3000;
 
-      addLog('Sending to hybrid transcription system...', 'processing');
+      addLog('Sending to AssemblyAI transcription system...', 'processing');
 
       // Call the hybrid transcription system
       const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
@@ -138,7 +138,7 @@ const Index = () => {
       setProcessingTime(result.processingTime);
 
       addLog(
-        `Transcribed using ${result.service} (${(result.processingTime / 1000).toFixed(2)}s)`,
+        `Transcribed using AssemblyAI (${(result.processingTime / 1000).toFixed(2)}s)`,
         'success'
       );
 
@@ -164,7 +164,7 @@ const Index = () => {
 
       toast({
         title: "Processing complete",
-        description: `${result.service} • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
+        description: `AssemblyAI • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
       });
 
     } catch (error) {
@@ -200,16 +200,16 @@ const Index = () => {
               <div className="w-12 h-12 rounded-full bg-pitch-green" />
             </div>
             <h1 className="text-4xl font-bold text-foreground">
-              ⚽ Hybrid Soccer Commentary System
+              ⚽ Soccer Commentary System
             </h1>
             <p className="text-lg text-muted-foreground">
-              Smart transcription with automatic event detection & database storage
+              AssemblyAI transcription with automatic event detection & database storage
             </p>
             
             {service && (
               <div className="flex items-center justify-center gap-2">
                 <Badge variant="outline" className="text-sm">
-                  {service === 'huggingface' ? '⚡ HuggingFace' : '🎯 AssemblyAI'}
+                  🎯 AssemblyAI
                 </Badge>
                 {processingTime > 0 && (
                   <span className="text-xs text-muted-foreground">
@@ -256,7 +256,7 @@ const Index = () => {
                 <div className="space-y-0.5">
                   <Label>Speaker Labels</Label>
                   <p className="text-sm text-muted-foreground">
-                    Identify different speakers (uses AssemblyAI)
+                    Identify different speakers in the audio
                   </p>
                 </div>
                 <Switch
