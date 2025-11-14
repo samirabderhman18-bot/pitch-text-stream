@@ -49,6 +49,23 @@ export const EVENT_KEYWORDS: Record<SoccerEventType, string[]> = {
   INTERCEPTION: ['interception', 'intercepts', 'cuts out', 'reads the pass'],
 };
 
+export const EVENT_KEYWORDS_AR: Record<SoccerEventType, string[]> = {
+  PASS: ['تمريرة', 'يمرر'],
+  GOAL: ['هدف', 'يسجل'],
+  SHOT: ['تسديدة', 'يسدد'],
+  SAVE: ['تصدي', 'يتصدى'],
+  FOUL: ['خطأ', 'فاول'],
+  YELLOW_CARD: ['بطاقة صفراء', 'إنذار'],
+  RED_CARD: ['بطاقة حمراء', 'طرد'],
+  CORNER: ['ركنية', 'ضربة زاوية'],
+  FREEKICK: ['ضربة حرة', 'ركلة حرة'],
+  PENALTY: ['ضربة جزاء', 'ركلة جزاء'],
+  SUBSTITUTION: ['تبديل', 'تغيير'],
+  OFFSIDE: ['تسلل', 'وضعية تسلل'],
+  TACKLE: ['افتكاك', 'يستخلص الكرة'],
+  INTERCEPTION: ['اعتراض', 'يقطع الكرة'],
+};
+
 export const EVENT_COLORS: Record<SoccerEventType, string> = {
   PASS: 'bg-primary/10 text-primary border-primary/20',
   GOAL: 'bg-pitch-green/20 text-pitch-green border-pitch-green/40',

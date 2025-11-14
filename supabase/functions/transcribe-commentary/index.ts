@@ -11,14 +11,14 @@ serve(async (req) => {
   }
 
   try {
-    const { audioData } = await req.json();
+    const { audioData, languageCode = 'en' } = await req.json(); // Default to English
     const assemblyAiKey = Deno.env.get('ASSEMBLYAI_API_KEY');
 
     if (!assemblyAiKey) {
       throw new Error('Assembly AI API key not configured');
     }
 
-    console.log('Starting transcription process...');
+    console.log(`Starting transcription process for language: ${languageCode}`);
 
     // Upload audio to Assembly AI
     const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
@@ -43,7 +43,7 @@ serve(async (req) => {
       body: JSON.stringify({
         audio_url: upload_url,
         speaker_labels: true,
-        language_code: 'en',
+        language_code: languageCode, // Use the provided language code
       }),
     });
 

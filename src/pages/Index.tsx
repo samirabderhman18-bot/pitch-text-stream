@@ -7,84 +7,72 @@ import { useToast } from '@/hooks/use-toast';
 import { detectEvents } from '@/utils/event-detector';
 import { SoccerEvent } from '@/types/soccer-events';
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
 const Index = () => {
   const [transcription, setTranscription] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState('');
   const [events, setEvents] = useState<SoccerEvent[]>([]);
+  const [language, setLanguage] = useState('en');
   const { toast } = useToast();
 
   // Detect events whenever transcription changes
   useEffect(() => {
     if (transcription) {
-      const detectedEvents = detectEvents(transcription);
-      setEvents(detectedEvents);
+      const detectedEvents = detectEvents(transcription, language);
+      // Filter out events that have already been detected in the previous transcript
+      const newEvents = detectedEvents.filter(
+        (newEvent) => !events.some((existingEvent) => existingEvent.text === newEvent.text)
+      );
+      if (newEvents.length > 0) {
+        setEvents((prevEvents) => [...newEvents, ...prevEvents]);
+      }
     }
   }, [transcription]);
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-    setStatus('Uploading audio...');
+    setStatus('Processing audio chunk...');
 
     try {
-      // Convert blob to base64
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
-      
       reader.onloadend = async () => {
         const base64Audio = reader.result?.toString().split(',')[1];
+        if (!base64Audio) return;
 
-        if (!base64Audio) {
-          throw new Error('Failed to process audio');
-        }
-
-        setStatus('Starting transcription...');
-
-        // Send to edge function
         const { data, error } = await supabase.functions.invoke('transcribe-commentary', {
-          body: { audioData: base64Audio },
+          body: { audioData: base64Audio, languageCode: language },
         });
 
         if (error) throw error;
-
-        const transcriptId = data.transcriptId;
-        setStatus('Transcribing...');
-
-        // Poll for results
-        let attempts = 0;
-        const maxAttempts = 60;
         
-        const pollInterval = setInterval(async () => {
-          attempts++;
-
+        const pollTranscript = async (transcriptId: string) => {
           const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke('get-transcript', {
             body: { transcriptId },
           });
 
-          if (transcriptError) {
-            clearInterval(pollInterval);
-            throw transcriptError;
-          }
+          if (transcriptError) throw transcriptError;
 
           if (transcriptData.status === 'completed') {
-            clearInterval(pollInterval);
-            setTranscription(transcriptData.text);
+            setTranscription((prev) => `${prev} ${transcriptData.text}`);
             setIsProcessing(false);
-            setStatus('Completed');
-            toast({
-              title: "Transcription complete",
-              description: "Commentary has been transcribed successfully",
-            });
+            setStatus('Ready');
           } else if (transcriptData.status === 'error') {
-            clearInterval(pollInterval);
             throw new Error('Transcription failed');
-          } else if (attempts >= maxAttempts) {
-            clearInterval(pollInterval);
-            throw new Error('Transcription timeout');
+          } else {
+            setTimeout(() => pollTranscript(transcriptId), 2000);
           }
+        };
 
-          setStatus(`Processing... (${transcriptData.status})`);
-        }, 2000);
+        pollTranscript(data.transcriptId);
       };
     } catch (error) {
       console.error('Error:', error);
@@ -114,8 +102,23 @@ const Index = () => {
             </p>
           </div>
 
+          <div className="flex justify-center">
+            <Select onValueChange={setLanguage} defaultValue={language}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Select language" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="en">English</SelectItem>
+                <SelectItem value="ar">Arabic</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-8 shadow-lg">
-            <AudioRecorder onRecordingComplete={handleRecordingComplete} />
+            <AudioRecorder
+              onRecordingComplete={handleRecordingComplete}
+              isProcessing={isProcessing}
+            />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
