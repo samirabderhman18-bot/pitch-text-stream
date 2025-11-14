@@ -1,19 +1,26 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Mic, Square, Upload } from 'lucide-react';
+import { Mic, Square } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob) => void;
+  isProcessing: boolean;
 }
 
-const AudioRecorder = ({ onRecordingComplete }: AudioRecorderProps) => {
+const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  const processAudioChunk = () => {
+    if (chunksRef.current.length > 0) {
+      const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      onRecordingComplete(audioBlob);
+      chunksRef.current = [];
+    }
+  };
 
   const startRecording = async () => {
     try {
@@ -25,22 +32,20 @@ const AudioRecorder = ({ onRecordingComplete }: AudioRecorderProps) => {
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
+          processAudioChunk(); // Process chunk immediately
         }
       };
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioUrl(url);
-        onRecordingComplete(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
 
-      mediaRecorder.start();
+      // Record in 5-second chunks
+      mediaRecorder.start(5000);
       setIsRecording(true);
       toast({
-        title: "Recording started",
-        description: "Commentary recording in progress...",
+        title: "Live transcription started",
+        description: "Commentary is being processed in real-time...",
       });
     } catch (error) {
       toast({
@@ -56,55 +61,31 @@ const AudioRecorder = ({ onRecordingComplete }: AudioRecorderProps) => {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       toast({
-        title: "Recording stopped",
-        description: "Processing audio...",
+        title: "Live transcription stopped",
       });
     }
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setAudioUrl(url);
-      onRecordingComplete(file);
-      toast({
-        title: "File uploaded",
-        description: "Processing audio file...",
-      });
+  // Automatically restart recording after processing
+  useEffect(() => {
+    if (isRecording && !isProcessing && mediaRecorderRef.current?.state === 'inactive') {
+      mediaRecorderRef.current.start(5000);
     }
-  };
+  }, [isRecording, isProcessing]);
 
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex gap-4">
         {!isRecording ? (
-          <>
-            <Button
-              onClick={startRecording}
-              size="lg"
-              className="bg-live-red hover:bg-live-red/90 text-white gap-2"
-            >
-              <Mic className="w-5 h-5" />
-              Start Recording
-            </Button>
-            <Button
-              onClick={() => fileInputRef.current?.click()}
-              variant="outline"
-              size="lg"
-              className="gap-2"
-            >
-              <Upload className="w-5 h-5" />
-              Upload Audio
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </>
+          <Button
+            onClick={startRecording}
+            size="lg"
+            className="bg-live-red hover:bg-live-red/90 text-white gap-2"
+            disabled={isProcessing}
+          >
+            <Mic className="w-5 h-5" />
+            Start Live Transcription
+          </Button>
         ) : (
           <Button
             onClick={stopRecording}
@@ -112,14 +93,13 @@ const AudioRecorder = ({ onRecordingComplete }: AudioRecorderProps) => {
             className="bg-destructive hover:bg-destructive/90 text-white gap-2"
           >
             <Square className="w-5 h-5" />
-            Stop Recording
+            Stop Transcription
           </Button>
         )}
       </div>
-
-      {audioUrl && (
-        <audio src={audioUrl} controls className="w-full max-w-md" />
-      )}
+       <p className="text-sm text-muted-foreground">
+        {isRecording ? 'Transcription is live...' : 'Click to start live transcription'}
+      </p>
     </div>
   );
 };

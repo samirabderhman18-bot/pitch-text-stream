@@ -1,17 +1,15 @@
-import { SoccerEvent, SoccerEventType, EVENT_KEYWORDS, RecognitionProtocol } from '@/types/soccer-events';
+import { SoccerEvent, SoccerEventType, EVENT_KEYWORDS, EVENT_KEYWORDS_AR, RecognitionProtocol } from '@/types/soccer-events';
 
-// Regex to find capitalized words, which could be names of players, teams, or referees.
-// This regex looks for sequences of capitalized words.
+// Regex to find capitalized words (for English)
 const ENTITY_REGEX = /\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\b/g;
 
 const extractEntities = (text: string): string[] => {
   const matches = text.match(ENTITY_REGEX);
-  return matches ? [...new Set(matches)] : []; // Return unique entities
+  return matches ? [...new Set(matches)] : [];
 };
 
-export const detectEvents = (text: string): SoccerEvent[] => {
+const detectEventsEn = (text: string): SoccerEvent[] => {
   const events: SoccerEvent[] = [];
-  // Split text into sentences for more accurate context.
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
 
   sentences.forEach((sentence) => {
@@ -32,7 +30,6 @@ export const detectEvents = (text: string): SoccerEvent[] => {
           
           if (isRefereeEvent && entities.length > 0) {
             protocolType = 'Referee — Event — Player';
-            // Assuming the first entity is the player, which is a simplification.
             playerA = entities[0];
             const refereeNameMatch = sentence.match(/referee ([A-Z][a-z]+)/i);
             referee = refereeNameMatch ? refereeNameMatch[1] : 'Unknown Referee';
@@ -45,31 +42,59 @@ export const detectEvents = (text: string): SoccerEvent[] => {
             playerA = entities[0];
           } else {
             protocolType = 'Team — Event';
-            team = 'Unknown Team'; // Placeholder
+            team = 'Unknown Team';
           }
 
-          // Create the event if a protocol was determined
           if (protocolType) {
-            const newEvent: SoccerEvent = {
+            events.push({
               type: eventType,
               timestamp: Date.now(),
               text: sentence.trim(),
-              confidence: 0.8, // Default confidence
+              confidence: 0.8,
               protocolType,
               playerA,
               playerB,
               team,
               referee,
-            };
-            events.push(newEvent);
-            break; // Move to the next sentence once an event is detected in the current one.
+            });
+            break;
           }
         }
       }
     });
   });
+  return events;
+};
 
-  // Remove duplicates - simple check based on text
+const detectEventsAr = (text: string): SoccerEvent[] => {
+  const events: SoccerEvent[] = [];
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+
+  sentences.forEach((sentence) => {
+    (Object.keys(EVENT_KEYWORDS_AR) as SoccerEventType[]).forEach((eventType) => {
+      const keywords = EVENT_KEYWORDS_AR[eventType];
+
+      for (const keyword of keywords) {
+        if (sentence.includes(keyword)) {
+          events.push({
+            type: eventType,
+            timestamp: Date.now(),
+            text: sentence.trim(),
+            confidence: 0.7, // Lower confidence for simpler detection
+            protocolType: 'Team — Event', // Default for Arabic for now
+            team: 'فريق غير معروف',
+          });
+          break;
+        }
+      }
+    });
+  });
+  return events;
+};
+
+export const detectEvents = (text: string, language: string = 'en'): SoccerEvent[] => {
+  const events = language === 'ar' ? detectEventsAr(text) : detectEventsEn(text);
+
   const uniqueEvents = events.filter(
     (event, index, self) => index === self.findIndex((e) => e.text === event.text && e.type === event.type)
   );
