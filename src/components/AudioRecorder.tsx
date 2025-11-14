@@ -6,9 +6,10 @@ import { useToast } from '@/hooks/use-toast';
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob) => void;
   isProcessing: boolean;
+  mode: 'assembly' | 'huggingface' | 'browser';
 }
 
-const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps) => {
+const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -43,9 +44,10 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps
       // Record in 5-second chunks
       mediaRecorder.start(5000);
       setIsRecording(true);
+      const modeLabel = mode === 'browser' ? 'Browser Whisper' : mode === 'huggingface' ? 'HuggingFace Whisper' : 'Assembly AI';
       toast({
         title: "Live transcription started",
-        description: "Commentary is being processed in real-time...",
+        description: `Using ${modeLabel} - Commentary is being processed in real-time...`,
       });
     } catch (error) {
       toast({
