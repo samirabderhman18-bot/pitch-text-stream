@@ -6,7 +6,6 @@ import EventLog from '@/components/EventLog';
 import RosterInput from '@/components/RosterInput';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { detectEvents } from '@/utils/event-detector';
 import { SoccerEvent } from '@/types/soccer-events';
 
 import {
@@ -17,6 +16,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 
 interface LogEntry {
   timestamp: number;
@@ -24,12 +26,24 @@ interface LogEntry {
   type: 'info' | 'success' | 'error' | 'processing';
 }
 
+interface EventData {
+  transcription: string;
+  player_name: string | null;
+  player_id: number | null;
+  team: string | null;
+  event_type: string;
+  target_player: string | null;
+  minute?: number;
+}
+
 interface TranscriptionResult {
   text: string;
   enhanced?: string;
+  events?: EventData[];
   speakers?: any[];
   service: string;
   processingTime: number;
+  saved?: boolean;
 }
 
 const Index = () => {
@@ -38,40 +52,47 @@ const Index = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState('');
   const [events, setEvents] = useState<SoccerEvent[]>([]);
-  const [language, setLanguage] = useState('en');
+  const [language, setLanguage] = useState('ar');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [roster, setRoster] = useState<string[]>([]);
   const [service, setService] = useState<string>('');
   const [processingTime, setProcessingTime] = useState<number>(0);
   const [needsSpeakerLabels, setNeedsSpeakerLabels] = useState(false);
+  const [extractEvents, setExtractEvents] = useState(true);
+  const [saveToDatabase, setSaveToDatabase] = useState(false);
+  const [matchId, setMatchId] = useState('');
   const { toast } = useToast();
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
   };
 
-  // Detect events whenever enhanced transcription changes
-  useEffect(() => {
-    const textToAnalyze = enhancedTranscription || transcription;
-    if (textToAnalyze) {
-      const detectedEvents = detectEvents(textToAnalyze, language);
-      // Filter out events that have already been detected
-      const newEvents = detectedEvents.filter(
-        (newEvent) => !events.some((existingEvent) => existingEvent.text === newEvent.text)
-      );
-      if (newEvents.length > 0) {
-        setEvents((prevEvents) => [...newEvents, ...prevEvents]);
-        newEvents.forEach(event => {
-          addLog(`Detected ${event.type}: ${event.text.substring(0, 50)}...`, 'success');
-        });
-      }
+  // Convert EventData to SoccerEvent format for display
+  const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
+    let protocolType: SoccerEvent['protocolType'] = 'Player – Event';
+    
+    if (eventData.target_player) {
+      protocolType = 'Player A – Event – Player B';
+    } else if (eventData.team && !eventData.player_name) {
+      protocolType = 'Team – Event';
     }
-  }, [enhancedTranscription, transcription]);
+
+    return {
+      type: eventData.event_type as any,
+      protocolType,
+      playerA: eventData.player_name || '',
+      playerB: eventData.target_player || '',
+      team: eventData.team || '',
+      referee: '',
+      text: eventData.transcription,
+      timestamp: Date.now(),
+    };
+  };
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-    addLog('Processing audio chunk with unified coordinator...', 'processing');
-    setStatus('Processing audio chunk...');
+    addLog('Processing audio with hybrid system...', 'processing');
+    setStatus('Processing audio...');
 
     try {
       // Convert audio blob to base64
@@ -79,7 +100,7 @@ const Index = () => {
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64 = reader.result as string;
-          resolve(base64.split(',')[1]); // Remove data:audio/webm;base64, prefix
+          resolve(base64.split(',')[1]);
         };
         reader.onerror = reject;
         reader.readAsDataURL(audioBlob);
@@ -88,9 +109,9 @@ const Index = () => {
       // Estimate audio duration (3 second chunks)
       const audioDuration = 3000;
 
-      addLog('Sending to transcription coordinator...', 'processing');
+      addLog('Sending to hybrid transcription system...', 'processing');
 
-      // Call the unified transcription coordinator
+      // Call the hybrid transcription system
       const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
         body: {
           audioData: base64Audio,
@@ -98,6 +119,9 @@ const Index = () => {
           roster: roster,
           audioDuration: audioDuration,
           needsSpeakerLabels: needsSpeakerLabels,
+          extractEvents: extractEvents,
+          saveToDatabase: saveToDatabase,
+          matchId: matchId || undefined,
         },
       });
 
@@ -105,7 +129,7 @@ const Index = () => {
 
       const result = data as TranscriptionResult;
 
-      // Update state with results
+      // Update transcription
       setTranscription(prev => prev + ' ' + result.text);
       if (result.enhanced) {
         setEnhancedTranscription(prev => prev + ' ' + result.enhanced);
@@ -118,26 +142,39 @@ const Index = () => {
         'success'
       );
 
-      if (result.enhanced) {
-        addLog('AI enhancement applied successfully', 'success');
+      // Handle extracted events
+      if (result.events && result.events.length > 0) {
+        addLog(`Detected ${result.events.length} event(s)`, 'success');
+        
+        const newEvents = result.events.map(convertToSoccerEvent);
+        setEvents(prev => [...newEvents, ...prev]);
+
+        result.events.forEach(event => {
+          addLog(`${event.event_type}: ${event.player_name || 'Team'} - ${event.transcription.substring(0, 50)}...`, 'info');
+        });
+      }
+
+      // Database save confirmation
+      if (result.saved) {
+        addLog('Events saved to database ✓', 'success');
       }
 
       setIsProcessing(false);
       setStatus('Ready');
 
       toast({
-        title: "Transcription complete",
-        description: `Processed using ${result.service} in ${(result.processingTime / 1000).toFixed(2)}s`,
+        title: "Processing complete",
+        description: `${result.service} • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
       });
 
     } catch (error) {
       console.error('Error:', error);
       setIsProcessing(false);
       setStatus('Error');
-      addLog(`Error: ${error instanceof Error ? error.message : 'Failed to transcribe'}`, 'error');
+      addLog(`Error: ${error instanceof Error ? error.message : 'Failed to process'}`, 'error');
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to transcribe audio",
+        description: error instanceof Error ? error.message : "Failed to process audio",
         variant: "destructive",
       });
     }
@@ -156,22 +193,23 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-secondary/20">
       <div className="container mx-auto px-4 py-8">
-        <div className="max-w-4xl mx-auto space-y-8">
+        <div className="max-w-6xl mx-auto space-y-8">
+          {/* Header */}
           <div className="text-center space-y-4">
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-pitch-green/10 mb-4">
               <div className="w-12 h-12 rounded-full bg-pitch-green" />
             </div>
             <h1 className="text-4xl font-bold text-foreground">
-              ⚽ Soccer Commentary Transcription
+              ⚽ Hybrid Soccer Commentary System
             </h1>
             <p className="text-lg text-muted-foreground">
-              Real-time speech-to-text with intelligent AI routing
+              Smart transcription with automatic event detection & database storage
             </p>
             
             {service && (
               <div className="flex items-center justify-center gap-2">
                 <Badge variant="outline" className="text-sm">
-                  {service === 'huggingface' ? '⚡ HuggingFace Whisper' : '🎯 AssemblyAI'}
+                  {service === 'huggingface' ? '⚡ HuggingFace' : '🎯 AssemblyAI'}
                 </Badge>
                 {processingTime > 0 && (
                   <span className="text-xs text-muted-foreground">
@@ -182,48 +220,98 @@ const Index = () => {
             )}
           </div>
 
-          <div className="flex flex-col md:flex-row justify-center gap-4">
-            <Select onValueChange={setLanguage} defaultValue={language}>
-              <SelectTrigger className="w-full md:w-[180px]">
-                <SelectValue placeholder="Select language" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en">🇬🇧 English</SelectItem>
-                <SelectItem value="ar">🇸🇦 Arabic</SelectItem>
-              </SelectContent>
-            </Select>
+          {/* Configuration Panel */}
+          <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-6 shadow-lg space-y-6">
+            <h3 className="text-xl font-semibold">Configuration</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Language Selector */}
+              <div className="space-y-2">
+                <Label>Language</Label>
+                <Select onValueChange={setLanguage} defaultValue={language}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">🇬🇧 English</SelectItem>
+                    <SelectItem value="ar">🇸🇦 Arabic</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            <div className="flex items-center gap-2 px-4 py-2 border rounded-md bg-card">
-              <input
-                type="checkbox"
-                id="speakerLabels"
-                checked={needsSpeakerLabels}
-                onChange={(e) => setNeedsSpeakerLabels(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300"
-              />
-              <label htmlFor="speakerLabels" className="text-sm cursor-pointer">
-                Detect Speakers
-              </label>
+              {/* Match ID (required for database save) */}
+              <div className="space-y-2">
+                <Label>Match ID (optional)</Label>
+                <Input
+                  placeholder="Enter match ID for database save"
+                  value={matchId}
+                  onChange={(e) => setMatchId(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-8 shadow-lg space-y-6">
-            <div>
-              <h3 className="text-lg font-semibold mb-4">Team Roster (Optional)</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Add player names to improve AI transcription accuracy
+            {/* Features Toggle */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Speaker Labels</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Identify different speakers (uses AssemblyAI)
+                  </p>
+                </div>
+                <Switch
+                  checked={needsSpeakerLabels}
+                  onCheckedChange={setNeedsSpeakerLabels}
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Extract Events</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Automatically detect soccer events (GOAL, PASS, etc.)
+                  </p>
+                </div>
+                <Switch
+                  checked={extractEvents}
+                  onCheckedChange={setExtractEvents}
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Save to Database</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Store events in match_events table (requires Match ID)
+                  </p>
+                </div>
+                <Switch
+                  checked={saveToDatabase}
+                  onCheckedChange={setSaveToDatabase}
+                  disabled={!matchId}
+                />
+              </div>
+            </div>
+
+            {/* Roster Input */}
+            <div className="space-y-2">
+              <Label>Team Roster (optional)</Label>
+              <p className="text-sm text-muted-foreground mb-2">
+                Add player names to improve transcription accuracy
               </p>
               <RosterInput roster={roster} onRosterChange={setRoster} />
             </div>
-            
-            <div className="border-t pt-6">
-              <AudioRecorder
-                onRecordingComplete={handleRecordingComplete}
-                isProcessing={isProcessing}
-              />
-            </div>
           </div>
 
+          {/* Audio Recorder */}
+          <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-8 shadow-lg">
+            <AudioRecorder
+              onRecordingComplete={handleRecordingComplete}
+              isProcessing={isProcessing}
+            />
+          </div>
+
+          {/* Results Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <TranscriptionDisplay
               transcription={transcription}
@@ -236,8 +324,10 @@ const Index = () => {
             <EventTimeline events={events} />
           </div>
 
+          {/* Event Log */}
           <EventLog logs={logs} />
 
+          {/* Clear Button */}
           {(transcription || enhancedTranscription || events.length > 0) && (
             <div className="flex justify-center">
               <button
