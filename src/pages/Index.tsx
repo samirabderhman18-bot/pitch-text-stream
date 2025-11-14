@@ -61,6 +61,7 @@ const Index = () => {
   const [extractEvents, setExtractEvents] = useState(true);
   const [saveToDatabase, setSaveToDatabase] = useState(false);
   const [matchId, setMatchId] = useState('');
+  const [transcriptionService, setTranscriptionService] = useState<'assemblyai' | 'gemini'>('assemblyai');
   const { toast } = useToast();
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
@@ -91,7 +92,7 @@ const Index = () => {
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-          addLog('Processing audio with AssemblyAI system...', 'processing');
+          addLog(`Processing audio with ${transcriptionService.toUpperCase()}...`, 'processing');
     setStatus('Processing audio...');
 
     try {
@@ -109,9 +110,9 @@ const Index = () => {
       // Estimate audio duration (3 second chunks)
       const audioDuration = 3000;
 
-      addLog('Sending to AssemblyAI transcription system...', 'processing');
+      addLog(`Sending to ${transcriptionService.toUpperCase()} transcription...`, 'processing');
 
-      // Call the hybrid transcription system
+      // Call the transcription system
       const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
         body: {
           audioData: base64Audio,
@@ -122,6 +123,7 @@ const Index = () => {
           extractEvents: extractEvents,
           saveToDatabase: saveToDatabase,
           matchId: matchId || undefined,
+          transcriptionService: transcriptionService,
         },
       });
 
@@ -138,7 +140,7 @@ const Index = () => {
       setProcessingTime(result.processingTime);
 
       addLog(
-        `Transcribed using AssemblyAI (${(result.processingTime / 1000).toFixed(2)}s)`,
+        `Transcribed using ${result.service.toUpperCase()} (${(result.processingTime / 1000).toFixed(2)}s)`,
         'success'
       );
 
@@ -164,7 +166,7 @@ const Index = () => {
 
       toast({
         title: "Processing complete",
-        description: `AssemblyAI • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
+        description: `${result.service.toUpperCase()} • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
       });
 
     } catch (error) {
@@ -203,13 +205,13 @@ const Index = () => {
               ⚽ Soccer Commentary System
             </h1>
             <p className="text-lg text-muted-foreground">
-              AssemblyAI transcription with automatic event detection & database storage
+              Choose between AssemblyAI or Gemini for transcription with automatic event detection
             </p>
             
             {service && (
               <div className="flex items-center justify-center gap-2">
                 <Badge variant="outline" className="text-sm">
-                  🎯 AssemblyAI
+                  {service === 'gemini' ? '🤖 Gemini' : '🎯 AssemblyAI'}
                 </Badge>
                 {processingTime > 0 && (
                   <span className="text-xs text-muted-foreground">
@@ -225,6 +227,28 @@ const Index = () => {
             <h3 className="text-xl font-semibold">Configuration</h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Transcription Service Selector */}
+              <div className="space-y-2">
+                <Label>Transcription Service</Label>
+                <Select 
+                  onValueChange={(value: 'assemblyai' | 'gemini') => setTranscriptionService(value)} 
+                  defaultValue={transcriptionService}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="assemblyai">🎯 AssemblyAI (Accurate)</SelectItem>
+                    <SelectItem value="gemini">🤖 Gemini (Fast)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {transcriptionService === 'gemini' 
+                    ? 'Gemini: Faster processing, direct audio analysis'
+                    : 'AssemblyAI: High accuracy, supports speaker labels'}
+                </p>
+              </div>
+
               {/* Language Selector */}
               <div className="space-y-2">
                 <Label>Language</Label>
@@ -238,6 +262,10 @@ const Index = () => {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Language Selector - Removed, now above */}
 
               {/* Match ID (required for database save) */}
               <div className="space-y-2">
@@ -256,12 +284,13 @@ const Index = () => {
                 <div className="space-y-0.5">
                   <Label>Speaker Labels</Label>
                   <p className="text-sm text-muted-foreground">
-                    Identify different speakers in the audio
+                    Identify different speakers (AssemblyAI only)
                   </p>
                 </div>
                 <Switch
                   checked={needsSpeakerLabels}
                   onCheckedChange={setNeedsSpeakerLabels}
+                  disabled={transcriptionService === 'gemini'}
                 />
               </div>
 
