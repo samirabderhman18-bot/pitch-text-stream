@@ -1,13 +1,16 @@
 project_id = "lqcxabgbknmitgdyimeb"
 
-[functions.transcribe-commentary]
+[functions.enhance-with-gemini]
+verify_jwt = false
+
+[functions.fetch-team-roster]
 verify_jwt = false
 
 [functions.get-transcript]
 verify_jwt = false
 
-[functions.transcribe-huggingface]
+[functions.transcribe-commentary]
 verify_jwt = false
 
-[functions.enhance-with-gemini]
+[functions.transcribe-huggingface]
 verify_jwt = false
