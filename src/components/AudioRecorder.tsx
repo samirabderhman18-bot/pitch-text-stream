@@ -6,10 +6,9 @@ import { useToast } from '@/hooks/use-toast';
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob) => void;
   isProcessing: boolean;
-  mode: 'assembly' | 'huggingface' | 'browser';
 }
 
-const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorderProps) => {
+const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -40,13 +39,12 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
         stream.getTracks().forEach(track => track.stop());
       };
 
-      // Record in 3-second chunks
+      // Record in 3-second chunks for live processing
       mediaRecorder.start(3000);
       setIsRecording(true);
-      const modeLabel = mode === 'browser' ? 'Browser Whisper' : mode === 'huggingface' ? 'HuggingFace Whisper' : 'Assembly AI';
       toast({
         title: "Live transcription started",
-        description: `Using ${modeLabel} - Commentary is being processed in real-time...`,
+        description: "Using intelligent service routing - Commentary is being processed in real-time...",
       });
     } catch (error) {
       toast({
@@ -106,7 +104,7 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing, mode }: AudioRecorde
           </Button>
         )}
       </div>
-       <p className="text-sm text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {isRecording ? 'Transcription is live...' : 'Click to start live transcription'}
       </p>
     </div>
