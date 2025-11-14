@@ -8,7 +8,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { detectEvents } from '@/utils/event-detector';
 import { SoccerEvent } from '@/types/soccer-events';
-import { transcribeAudioBrowser } from '@/utils/whisper-browser';
 
 import {
   Select,
@@ -17,8 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-
-type TranscriptionMode = 'assembly' | 'huggingface' | 'browser';
+import { Badge } from "@/components/ui/badge"
 
 interface LogEntry {
   timestamp: number;
@@ -26,26 +24,38 @@ interface LogEntry {
   type: 'info' | 'success' | 'error' | 'processing';
 }
 
+interface TranscriptionResult {
+  text: string;
+  enhanced?: string;
+  speakers?: any[];
+  service: string;
+  processingTime: number;
+}
+
 const Index = () => {
   const [transcription, setTranscription] = useState('');
+  const [enhancedTranscription, setEnhancedTranscription] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [status, setStatus] = useState('');
   const [events, setEvents] = useState<SoccerEvent[]>([]);
   const [language, setLanguage] = useState('en');
-  const [mode, setMode] = useState<TranscriptionMode>('browser');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [roster, setRoster] = useState<string[]>([]);
+  const [service, setService] = useState<string>('');
+  const [processingTime, setProcessingTime] = useState<number>(0);
+  const [needsSpeakerLabels, setNeedsSpeakerLabels] = useState(false);
   const { toast } = useToast();
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
   };
 
-  // Detect events whenever transcription changes
+  // Detect events whenever enhanced transcription changes
   useEffect(() => {
-    if (transcription) {
-      const detectedEvents = detectEvents(transcription, language);
-      // Filter out events that have already been detected in the previous transcript
+    const textToAnalyze = enhancedTranscription || transcription;
+    if (textToAnalyze) {
+      const detectedEvents = detectEvents(textToAnalyze, language);
+      // Filter out events that have already been detected
       const newEvents = detectedEvents.filter(
         (newEvent) => !events.some((existingEvent) => existingEvent.text === newEvent.text)
       );
@@ -56,111 +66,70 @@ const Index = () => {
         });
       }
     }
-  }, [transcription]);
-
-  const enhanceWithGemini = async (text: string) => {
-    try {
-      const { data, error } = await supabase.functions.invoke('enhance-with-gemini', {
-        body: { text, roster, language },
-      });
-
-      if (error) throw error;
-      return data.text;
-    } catch (error) {
-      console.error('Gemini enhancement error:', error);
-      return text; // Return original if enhancement fails
-    }
-  };
+  }, [enhancedTranscription, transcription]);
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-    addLog(`Processing audio chunk with ${mode}...`, 'processing');
+    addLog('Processing audio chunk with unified coordinator...', 'processing');
     setStatus('Processing audio chunk...');
 
     try {
-      let rawText = '';
-      
-      if (mode === 'browser') {
-        // Browser-based Whisper
-        addLog('Transcribing with browser-based Whisper...', 'processing');
-        rawText = await transcribeAudioBrowser(audioBlob);
-      } else if (mode === 'huggingface') {
-        // HuggingFace API
+      // Convert audio blob to base64
+      const base64Audio = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64Audio = reader.result?.toString().split(',')[1];
-          if (!base64Audio) return;
-
-          addLog('Sending to HuggingFace API...', 'processing');
-          const { data, error } = await supabase.functions.invoke('transcribe-huggingface', {
-            body: { audioData: base64Audio, languageCode: language },
-          });
-
-          if (error) throw error;
-          
-          rawText = data.text;
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          resolve(base64.split(',')[1]); // Remove data:audio/webm;base64, prefix
         };
+        reader.onerror = reject;
         reader.readAsDataURL(audioBlob);
-        await new Promise(resolve => { reader.onloadend = resolve; });
-      } else {
-        // Assembly AI
-        await new Promise<void>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            const base64Audio = reader.result?.toString().split(',')[1];
-            if (!base64Audio) {
-              resolve();
-              return;
-            }
+      });
 
-            addLog('Uploading to Assembly AI...', 'processing');
-            const { data, error } = await supabase.functions.invoke('transcribe-commentary', {
-              body: { audioData: base64Audio, languageCode: language },
-            });
+      // Estimate audio duration (3 second chunks)
+      const audioDuration = 3000;
 
-            if (error) {
-              reject(error);
-              return;
-            }
-            
-            addLog('Polling Assembly AI for results...', 'processing');
-            const pollTranscript = async (transcriptId: string) => {
-              const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke('get-transcript', {
-                body: { transcriptId },
-              });
+      addLog('Sending to transcription coordinator...', 'processing');
 
-              if (transcriptError) {
-                reject(transcriptError);
-                return;
-              }
+      // Call the unified transcription coordinator
+      const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
+        body: {
+          audioData: base64Audio,
+          languageCode: language,
+          roster: roster,
+          audioDuration: audioDuration,
+          needsSpeakerLabels: needsSpeakerLabels,
+        },
+      });
 
-              if (transcriptData.status === 'completed') {
-                rawText = transcriptData.text;
-                resolve();
-              } else if (transcriptData.status === 'error') {
-                reject(new Error('Transcription failed'));
-              } else {
-                setTimeout(() => pollTranscript(transcriptId), 2000);
-              }
-            };
+      if (error) throw error;
 
-            pollTranscript(data.transcriptId);
-          };
-          reader.readAsDataURL(audioBlob);
-        });
+      const result = data as TranscriptionResult;
+
+      // Update state with results
+      setTranscription(prev => prev + ' ' + result.text);
+      if (result.enhanced) {
+        setEnhancedTranscription(prev => prev + ' ' + result.enhanced);
+      }
+      setService(result.service);
+      setProcessingTime(result.processingTime);
+
+      addLog(
+        `Transcribed using ${result.service} (${(result.processingTime / 1000).toFixed(2)}s)`,
+        'success'
+      );
+
+      if (result.enhanced) {
+        addLog('AI enhancement applied successfully', 'success');
       }
 
-      // Enhance with Gemini AI
-      if (rawText) {
-        addLog('Enhancing with Gemini AI...', 'processing');
-        const enhancedText = await enhanceWithGemini(rawText);
-        setTranscription((prev) => `${prev} ${enhancedText}`);
-        addLog('Transcription enhanced and completed', 'success');
-      }
-      
       setIsProcessing(false);
       setStatus('Ready');
+
+      toast({
+        title: "Transcription complete",
+        description: `Processed using ${result.service} in ${(result.processingTime / 1000).toFixed(2)}s`,
+      });
+
     } catch (error) {
       console.error('Error:', error);
       setIsProcessing(false);
@@ -172,6 +141,16 @@ const Index = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const handleClearAll = () => {
+    setTranscription('');
+    setEnhancedTranscription('');
+    setEvents([]);
+    setLogs([]);
+    setService('');
+    setProcessingTime(0);
+    addLog('All data cleared', 'info');
   };
 
   return (
@@ -186,36 +165,54 @@ const Index = () => {
               ⚽ Soccer Commentary Transcription
             </h1>
             <p className="text-lg text-muted-foreground">
-              Real-time speech-to-text powered by Assembly AI
+              Real-time speech-to-text with intelligent AI routing
             </p>
+            
+            {service && (
+              <div className="flex items-center justify-center gap-2">
+                <Badge variant="outline" className="text-sm">
+                  {service === 'huggingface' ? '⚡ HuggingFace Whisper' : '🎯 AssemblyAI'}
+                </Badge>
+                {processingTime > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Avg: {(processingTime / 1000).toFixed(2)}s per chunk
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="flex justify-center gap-4">
-            <Select onValueChange={(value: TranscriptionMode) => setMode(value)} defaultValue={mode}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Select mode" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="browser">Browser Whisper</SelectItem>
-                <SelectItem value="huggingface">HuggingFace API</SelectItem>
-                <SelectItem value="assembly">Assembly AI</SelectItem>
-              </SelectContent>
-            </Select>
-            
+          <div className="flex flex-col md:flex-row justify-center gap-4">
             <Select onValueChange={setLanguage} defaultValue={language}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full md:w-[180px]">
                 <SelectValue placeholder="Select language" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="en">English</SelectItem>
-                <SelectItem value="ar">Arabic</SelectItem>
+                <SelectItem value="en">🇬🇧 English</SelectItem>
+                <SelectItem value="ar">🇸🇦 Arabic</SelectItem>
               </SelectContent>
             </Select>
+
+            <div className="flex items-center gap-2 px-4 py-2 border rounded-md bg-card">
+              <input
+                type="checkbox"
+                id="speakerLabels"
+                checked={needsSpeakerLabels}
+                onChange={(e) => setNeedsSpeakerLabels(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300"
+              />
+              <label htmlFor="speakerLabels" className="text-sm cursor-pointer">
+                Detect Speakers
+              </label>
+            </div>
           </div>
 
           <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-8 shadow-lg space-y-6">
             <div>
               <h3 className="text-lg font-semibold mb-4">Team Roster (Optional)</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                Add player names to improve AI transcription accuracy
+              </p>
               <RosterInput roster={roster} onRosterChange={setRoster} />
             </div>
             
@@ -223,7 +220,6 @@ const Index = () => {
               <AudioRecorder
                 onRecordingComplete={handleRecordingComplete}
                 isProcessing={isProcessing}
-                mode={mode}
               />
             </div>
           </div>
@@ -231,13 +227,27 @@ const Index = () => {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <TranscriptionDisplay
               transcription={transcription}
+              enhancedTranscription={enhancedTranscription}
               isLoading={isProcessing}
               status={status}
+              service={service}
+              processingTime={processingTime}
             />
             <EventTimeline events={events} />
           </div>
 
           <EventLog logs={logs} />
+
+          {(transcription || enhancedTranscription || events.length > 0) && (
+            <div className="flex justify-center">
+              <button
+                onClick={handleClearAll}
+                className="px-6 py-2 bg-destructive text-white rounded-md hover:bg-destructive/90 transition-colors"
+              >
+                Clear All Data
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
