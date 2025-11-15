@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { X, Search, Users, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -81,15 +80,17 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
   const loadTeamPlayers = async (teamId: number, teamName: string) => {
     setIsLoadingPlayers(true);
     try {
-      const { data, error } = await supabase.functions.invoke('fetch-team-roster', {
-        body: { action: 'get-players', teamId },
-      });
+      // Query the database for players from this team
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .eq('team_id', teamId);
 
       if (error) throw error;
 
-      if (data.response && data.response.length > 0) {
-        const playerNames = data.response.map((item: any) => 
-          `${item.player.firstname} ${item.player.lastname}`
+      if (data && data.length > 0) {
+        const playerNames = data.map((player: any) => 
+          `${player.forename} ${player.surname}`
         );
         onRosterChange(playerNames);
         toast({
@@ -100,7 +101,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
       } else {
         toast({
           title: "No players found",
-          description: "This team has no players in the database for the current season",
+          description: "This team has no players in the database",
           variant: "destructive",
         });
       }
@@ -114,10 +115,6 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
     } finally {
       setIsLoadingPlayers(false);
     }
-  };
-
-  const removePlayer = (player: string) => {
-    onRosterChange(roster.filter(p => p !== player));
   };
 
   const clearRoster = () => {
@@ -252,7 +249,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Users className="w-4 h-4" />
-              <span>{roster.length} players</span>
+              <span>{roster.length} players selected</span>
             </div>
             <Button 
               variant="ghost" 
@@ -262,17 +259,6 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
             >
               Clear All
             </Button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {roster.map((player) => (
-              <Badge key={player} variant="secondary" className="gap-2">
-                {player}
-                <X
-                  className="w-3 h-3 cursor-pointer hover:text-destructive"
-                  onClick={() => removePlayer(player)}
-                />
-              </Badge>
-            ))}
           </div>
         </div>
       )}
