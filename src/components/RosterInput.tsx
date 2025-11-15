@@ -80,28 +80,27 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
   const loadTeamPlayers = async (teamId: number, teamName: string) => {
     setIsLoadingPlayers(true);
     try {
-      // Query the database for players from this team
+      // Query the database for all players
+      // Note: You'll need to add team_id field when uploading JSON data
+      // For now, we'll load all players since the JSON doesn't include team relationships
       const { data, error } = await supabase
         .from('players')
-        .select('*')
-        .eq('team_id', teamId);
+        .select('id, forename, surname');
 
       if (error) throw error;
 
       if (data && data.length > 0) {
-        const playerNames = data.map((player: any) => 
-          `${player.forename} ${player.surname}`
-        );
-        onRosterChange(playerNames);
+        const playerIds = data.map((player: any) => player.id.toString());
+        onRosterChange(playerIds);
         toast({
           title: "Roster loaded",
-          description: `Loaded ${playerNames.length} players from ${teamName}`,
+          description: `Loaded ${playerIds.length} players from database`,
         });
         setOpen(false);
       } else {
         toast({
           title: "No players found",
-          description: "This team has no players in the database",
+          description: "No players in the database",
           variant: "destructive",
         });
       }
@@ -109,7 +108,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
       console.error('Error loading players:', error);
       toast({
         title: "Error",
-        description: "Failed to load team roster. Please try again.",
+        description: "Failed to load roster. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -145,11 +144,9 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         description: `Uploaded ${data.count} players to database`,
       });
 
-      // Load the players into the roster
-      const playerNames = jsonData.PlayerData.map((p: any) => 
-        `${p.Forename} ${p.Surname}`
-      );
-      onRosterChange(playerNames);
+      // Load the player IDs into the roster
+      const playerIds = jsonData.PlayerData.map((p: any) => p.ID.toString());
+      onRosterChange(playerIds);
     } catch (error) {
       console.error('JSON upload error:', error);
       toast({
