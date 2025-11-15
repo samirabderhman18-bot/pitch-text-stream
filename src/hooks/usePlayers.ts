@@ -1,13 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 /**
  * @interface Player
  * Defines the data structure for a player as used in the application.
- * IMPORTANT: Your Supabase 'players' table columns should match this structure
- * (e.g., 'id', 'forename', 'surname', 'full_name', 'image_url').
- * The transformation from the JSON's PascalCase (e.g., 'Forename') to this
- * snake_case format must be handled by your 'upload-players' Supabase function.
+ * Your Supabase 'players' table columns should match this structure.
  */
 interface Player {
   id: number;
@@ -18,73 +15,88 @@ interface Player {
 }
 
 /**
- * Custom hook to fetch, manage, and search player data from Supabase.
+ * A custom hook to fetch and manage player data from Supabase,
+ * with a primary focus on fetching players for a specific club.
  */
 export const usePlayers = () => {
   const [players, setPlayers] = useState<Player[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchPlayers();
+  /**
+   * Fetches all players associated with a specific club ID.
+   * If the clubId is null, it clears the player list.
+   * @param clubId The ID of the club/team to fetch players for.
+   */
+  const fetchPlayersByClubId = useCallback(async (clubId: number | null) => {
+    // If no club is selected, clear the list and do nothing else.
+    if (clubId === null) {
+      setPlayers([]);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Fetch all players where the 'team_id' column matches the provided clubId.
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .eq('team_id', clubId)
+        .order('surname', { ascending: true });
+
+      if (error) throw error;
+      
+      setPlayers(data || []);
+    } catch (err) {
+      console.error('Error fetching players by club ID:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch the club roster.');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   /**
-   * Fetches all players from the 'players' table in Supabase.
+   * Fetches ALL players from the database.
+   * Use this for pages that might need a full player directory.
    */
-  const fetchPlayers = async () => {
+  const fetchAllPlayers = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
     try {
-      setIsLoading(true);
-      setError(null); // Reset error state on new fetch
-
-      // Select all columns and order by surname for consistent display.
       const { data, error } = await supabase
         .from('players')
         .select('*')
         .order('surname', { ascending: true });
 
-      if (error) {
-        // If Supabase returns an error, throw it to be caught by the catch block.
-        throw error;
-      }
-      
-      // Set the fetched data. If data is null, default to an empty array.
+      if (error) throw error;
       setPlayers(data || []);
-
     } catch (err) {
-      console.error('Error fetching players:', err);
-      // Set a user-friendly error message.
-      setError(err instanceof Error ? err.message : 'An unknown error occurred while fetching players.');
+      console.error('Error fetching all players:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch players.');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   /**
-   * Performs a client-side search on the already fetched players.
+   * Performs a client-side search on the currently loaded players.
    * @param query The search string.
-   * @returns A filtered array of players matching the query.
    */
   const searchPlayers = (query: string): Player[] => {
-    // If there's no query, return the full list of players.
     if (!query) return players;
-
     const lowerQuery = query.toLowerCase();
-
-    // Filter by checking if the query appears in the full name, forename, or surname.
-    return players.filter(player => 
-      player.full_name.toLowerCase().includes(lowerQuery) ||
-      player.forename.toLowerCase().includes(lowerQuery) ||
-      player.surname.toLowerCase().includes(lowerQuery)
+    return players.filter(player =>
+      player.full_name.toLowerCase().includes(lowerQuery)
     );
   };
 
-  // Expose state and functions to the component using this hook.
-  return { 
-    players, 
-    isLoading, 
-    error, 
-    searchPlayers, 
-    refetch: fetchPlayers // Expose a function to allow manual refetching.
+  return {
+    players,
+    isLoading,
+    error,
+    fetchPlayersByClubId, // The primary function for this use case
+    fetchAllPlayers,
+    searchPlayers,
   };
 };
