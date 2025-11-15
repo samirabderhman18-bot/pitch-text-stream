@@ -268,50 +268,40 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : players.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 max-h-[600px] overflow-y-auto p-2">
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2 max-h-[500px] overflow-y-auto p-2">
               {players.map((player) => (
                 <div
                   key={player.id}
-                  className="group relative bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl p-3 hover:from-primary/10 hover:to-primary/20 transition-all duration-300 cursor-pointer shadow-sm hover:shadow-md border border-primary/10 hover:border-primary/30"
+                  className="group relative bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg p-2 hover:scale-105 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-lg border border-blue-200/50 dark:border-blue-800/50"
                 >
-                  {/* Position Badge */}
+                  {/* Position Badge - Top Right */}
                   {player.position && (
-                    <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground text-xs font-bold px-2 py-0.5 rounded-full shadow-sm">
+                    <div className="absolute -top-1 -right-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-sm">
                       {player.position}
                     </div>
                   )}
                   
-                  {/* Player Avatar Circle */}
-                  <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center text-primary font-bold text-lg shadow-inner">
-                    {player.name.charAt(0).toUpperCase()}
+                  {/* Avatar Circle - Smaller */}
+                  <div className="w-8 h-8 mx-auto mb-1 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm shadow-md">
+                    {player.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase()}
                   </div>
                   
-                  {/* Player Name */}
-                  <p className="text-xs font-semibold text-center mb-1 line-clamp-2 min-h-[2rem]" title={player.name}>
+                  {/* Player Name - Compact */}
+                  <p className="text-[10px] font-semibold text-center leading-tight line-clamp-2 mb-1 h-6" title={player.name}>
                     {player.name}
                   </p>
                   
-                  {/* Stats Row */}
-                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                    {player.overall_rating && (
-                      <span className="bg-primary/10 px-1.5 py-0.5 rounded font-medium">
+                  {/* Rating Badge - Centered */}
+                  {player.overall_rating && (
+                    <div className="flex justify-center">
+                      <span className="bg-gradient-to-r from-amber-400 to-orange-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm">
                         {player.overall_rating}
                       </span>
-                    )}
-                    {player.age && (
-                      <span className="opacity-70">{player.age}y</span>
-                    )}
-                  </div>
-                  
-                  {/* Nationality */}
-                  {player.nationality && (
-                    <p className="text-[10px] text-center text-muted-foreground mt-1 truncate" title={player.nationality}>
-                      {player.nationality}
-                    </p>
+                    </div>
                   )}
                   
-                  {/* Hover Effect Overlay */}
-                  <div className="absolute inset-0 rounded-xl bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                  {/* Shine Effect on Hover */}
+                  <div className="absolute inset-0 rounded-lg bg-gradient-to-tr from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                 </div>
               ))}
             </div>
