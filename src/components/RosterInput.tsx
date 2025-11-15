@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Users, Upload, Loader2, ChevronsUpDown } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { X, Search, Users, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -17,183 +18,139 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-// This interface now represents a club/team from your database
-interface Club {
+interface Team {
   id: number;
   name: string;
-  logo_url: string;
+  logo: string;
+  country: string;
 }
 
-// Props for the component - now accepts selectedClubId instead of roster
 interface RosterInputProps {
-  selectedClubId: number | null;
-  onClubSelected: (clubId: number | null) => void;
+  roster: string[];
+  onRosterChange: (roster: string[]) => void;
 }
 
-const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
-  // State for the club list
-  const [clubs, setClubs] = useState<Club[]>([]);
-  const [isClubsLoading, setIsClubsLoading] = useState(true);
-  const [playerCount, setPlayerCount] = useState<number>(0);
-  
-  // State for component interactions
+const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [isUploadingJson, setIsUploadingJson] = useState(false);
-  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const [open, setOpen] = useState(false);
   const { toast } = useToast();
 
-  // Effect to fetch all clubs when the component mounts
-  useEffect(() => {
-    const fetchAllClubs = async () => {
-      setIsClubsLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from('teams')
-          .select('id, name, logo_url')
-          .order('name', { ascending: true });
+  const searchTeams = async () => {
+    if (!searchQuery.trim()) return;
+    
+    setIsSearching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-team-roster', {
+        body: { action: 'search-teams', query: searchQuery },
+      });
 
-        if (error) throw error;
-        
-        setClubs(data || []);
-      } catch (error) {
-        console.error("Error fetching clubs:", error);
+      if (error) throw error;
+
+      if (data.response && data.response.length > 0) {
+        setTeams(data.response.map((item: any) => ({
+          id: item.team.id,
+          name: item.team.name,
+          logo: item.team.logo,
+          country: item.team.country,
+        })));
+        setOpen(true);
+      } else {
         toast({
-          title: "Failed to fetch clubs",
-          description: "Could not load the list of clubs from the database.",
+          title: "No teams found",
+          description: "Try a different search term",
           variant: "destructive",
         });
-      } finally {
-        setIsClubsLoading(false);
       }
-    };
-
-    fetchAllClubs();
-  }, [toast]);
-
-  // Effect to load player count when club is selected
-  useEffect(() => {
-    const loadPlayerCount = async () => {
-      if (!selectedClubId) {
-        setPlayerCount(0);
-        return;
-      }
-
-      setIsLoadingPlayers(true);
-      try {
-        const { data, error } = await supabase
-          .from('players')
-          .select('id', { count: 'exact', head: true })
-          .eq('team_id', selectedClubId);
-
-        if (error) throw error;
-
-        const count = data?.length || 0;
-        setPlayerCount(count);
-        
-        if (count === 0) {
-          toast({
-            title: "No players found",
-            description: "This club has no players associated with it in the database.",
-            variant: "destructive",
-          });
-        }
-      } catch (error) {
-        console.error('Error loading player count:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load player count. Please try again.",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoadingPlayers(false);
-      }
-    };
-
-    loadPlayerCount();
-  }, [selectedClubId, toast]);
-
-  /**
-   * Handles the selection of a club from the dropdown.
-   */
-  const handleClubSelect = (club: Club) => {
-    onClubSelected(club.id);
-    setIsPopoverOpen(false);
-    toast({
-      title: "Club Selected",
-      description: `Selected ${club.name}. Loading player roster...`,
-    });
+    } catch (error) {
+      console.error('Error searching teams:', error);
+      toast({
+        title: "Error",
+        description: "Failed to search teams. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearching(false);
+    }
   };
-  
-  /**
-   * Handles the upload of a player data JSON file.
-   */
+
+  const loadTeamPlayers = async (teamId: number, teamName: string) => {
+    setIsLoadingPlayers(true);
+    try {
+      // Query the database for players from this club
+      const { data, error } = await supabase
+        .from('players')
+        .select('id')
+        .eq('club_id', teamId);
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const playerIds = data.map((player: any) => player.id.toString());
+        onRosterChange(playerIds);
+        toast({
+          title: "Roster loaded",
+          description: `Loaded ${playerIds.length} players from ${teamName}`,
+        });
+        setOpen(false);
+      } else {
+        toast({
+          title: "No players found",
+          description: "This club has no players in the database",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error loading players:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load roster. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingPlayers(false);
+    }
+  };
+
+  const clearRoster = () => {
+    onRosterChange([]);
+  };
+
   const handleJsonUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     setIsUploadingJson(true);
-    
-    toast({
-      title: 'Uploading...',
-      description: 'Reading JSON file and preparing data...',
-    });
-
     try {
       const text = await file.text();
       const jsonData = JSON.parse(text);
       
-      // Validate JSON structure
       if (!jsonData.PlayerData || !Array.isArray(jsonData.PlayerData)) {
-        throw new Error('Invalid JSON format. Expected a root object with a "PlayerData" array.');
+        throw new Error('Invalid JSON format. Expected {PlayerData: [...]}');
       }
 
-      toast({
-        title: 'Processing...',
-        description: `Uploading ${jsonData.PlayerData.length} players to database...`,
-      });
-
-      // Call edge function to process and insert data
       const { data, error } = await supabase.functions.invoke('upload-players', {
         body: { playerData: jsonData.PlayerData }
       });
 
-      if (error) {
-        console.error('Edge function error:', error);
-        throw new Error(error.message || 'Failed to upload players to database');
-      }
+      if (error) throw error;
 
-      // Success feedback
       toast({
-        title: 'Upload Successful! ✓',
-        description: `${data.playersInserted || data.count || jsonData.PlayerData.length} players and their teams have been saved to the database.`,
-      });
-      
-      // Refresh clubs list to show newly added teams
-      toast({
-        title: 'Refreshing...',
-        description: 'Loading updated club list...',
+        title: 'Success',
+        description: `Inserted ${data.playersInserted} players, updated ${data.playersUpdated} players`,
       });
 
-      const { data: clubsData, error: clubsError } = await supabase
-        .from('teams')
-        .select('id, name, logo_url')
-        .order('name', { ascending: true });
-
-      if (clubsError) {
-        console.error('Error refreshing clubs:', clubsError);
-      } else if (clubsData) {
-        setClubs(clubsData);
-        toast({
-          title: 'Ready!',
-          description: `Club list updated. ${clubsData.length} clubs available.`,
-        });
-      }
-      
+      // Load the player IDs into the roster
+      const playerIds = jsonData.PlayerData.map((p: any) => p.ID.toString());
+      onRosterChange(playerIds);
     } catch (error) {
       console.error('JSON upload error:', error);
       toast({
-        title: 'Upload Failed',
-        description: error instanceof Error ? error.message : 'Could not process the JSON file.',
+        title: 'Upload failed',
+        description: error instanceof Error ? error.message : 'Failed to upload JSON file',
         variant: 'destructive',
       });
     } finally {
@@ -201,40 +158,31 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
       event.target.value = '';
     }
   };
-  
-  /**
-   * Clears the current club selection.
-   */
-  const clearSelection = () => {
-    onClubSelected(null);
-    setPlayerCount(0);
-  };
-
-  const selectedClubName = clubs.find(c => c.id === selectedClubId)?.name || "Select a club...";
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-2">
-        {/* File Upload Button */}
-        <Button
-          type="button"
-          variant="outline"
-          disabled={isUploadingJson}
-          onClick={() => document.getElementById('json-upload')?.click()}
-          className="w-full sm:w-auto"
-        >
-          {isUploadingJson ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Uploading...
-            </>
-          ) : (
-            <>
-              <Upload className="mr-2 h-4 w-4" />
-              Upload Player JSON
-            </>
-          )}
-        </Button>
+      <div className="flex gap-2 mb-2">
+        <label htmlFor="json-upload">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isUploadingJson}
+            onClick={() => document.getElementById('json-upload')?.click()}
+          >
+            {isUploadingJson ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload className="mr-2 h-4 w-4" />
+                Upload JSON
+              </>
+            )}
+          </Button>
+        </label>
         <input
           id="json-upload"
           type="file"
@@ -244,75 +192,68 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         />
       </div>
       
-      {/* Club Selector Combobox */}
-      <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={isPopoverOpen}
-            className="w-full justify-between"
-            disabled={isClubsLoading || isLoadingPlayers}
-          >
-            {isClubsLoading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              selectedClubName
-            )}
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[350px] p-0">
-          <Command>
-            <CommandInput placeholder="Search clubs..." />
-            <CommandList>
-              {isClubsLoading && (
-                <div className="p-4 text-sm text-center">Loading clubs...</div>
-              )}
-              <CommandEmpty>No clubs found.</CommandEmpty>
-              <CommandGroup>
-                {clubs.map((club) => (
-                  <CommandItem
-                    key={club.id}
-                    value={club.name}
-                    onSelect={() => handleClubSelect(club)}
-                    className="cursor-pointer"
-                  >
-                    <img src={club.logo_url} alt="" className="w-6 h-6 mr-3 object-contain" />
-                    <span>{club.name}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      <div className="flex gap-2">
+        <Input
+          placeholder="Search for a team..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && searchTeams()}
+          className="flex-1"
+        />
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button 
+              onClick={searchTeams} 
+              disabled={isSearching || !searchQuery.trim()}
+              className="gap-2"
+            >
+              <Search className="w-4 h-4" />
+              {isSearching ? 'Searching...' : 'Search'}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[400px] p-0" align="end">
+            <Command>
+              <CommandInput placeholder="Filter teams..." />
+              <CommandList>
+                <CommandEmpty>No teams found.</CommandEmpty>
+                <CommandGroup heading="Select a team">
+                  {teams.map((team) => (
+                    <CommandItem
+                      key={team.id}
+                      onSelect={() => loadTeamPlayers(team.id, team.name)}
+                      disabled={isLoadingPlayers}
+                      className="cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 w-full">
+                        <img src={team.logo} alt={team.name} className="w-8 h-8 object-contain" />
+                        <div className="flex-1">
+                          <div className="font-medium">{team.name}</div>
+                          <div className="text-xs text-muted-foreground">{team.country}</div>
+                        </div>
+                      </div>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
       
-      {/* Club & Player Information Display */}
-      {selectedClubId && (
-        <div className="p-3 border rounded-md bg-muted/50">
+      {roster.length > 0 && (
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm font-medium">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Users className="w-4 h-4" />
-              <span>
-                {isLoadingPlayers ? (
-                  <>
-                    <Loader2 className="inline w-3 h-3 animate-spin mr-1" />
-                    Loading players...
-                  </>
-                ) : (
-                  `${playerCount} Player${playerCount !== 1 ? 's' : ''} in Roster`
-                )}
-              </span>
+              <span>{roster.length} players selected</span>
             </div>
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={clearSelection}
-              className="h-7 text-xs px-2"
+              onClick={clearRoster}
+              className="h-8 text-xs"
             >
-              <X className="mr-1 h-3 w-3" />
-              Clear Selection
+              Clear All
             </Button>
           </div>
         </div>
