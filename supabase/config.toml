@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.transcribe-huggingface]
 verify_jwt = false
+
+[functions.upload-players]
+verify_jwt = false
