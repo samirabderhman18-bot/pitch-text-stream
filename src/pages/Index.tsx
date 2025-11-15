@@ -10,17 +10,18 @@ import { SoccerEvent } from '@/types/soccer-events';
 import { usePlayers } from '@/hooks/usePlayers';
 import { detectEventsWithDatabase } from '@/utils/enhanced-event-detector';
 
+// UI Components
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 interface LogEntry {
   timestamp: number;
@@ -49,6 +50,7 @@ interface TranscriptionResult {
 }
 
 const Index = () => {
+  // Component State
   const [transcription, setTranscription] = useState('');
   const [enhancedTranscription, setEnhancedTranscription] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -56,31 +58,40 @@ const Index = () => {
   const [events, setEvents] = useState<SoccerEvent[]>([]);
   const [language, setLanguage] = useState('ar');
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [roster, setRoster] = useState<string[]>([]);
   const [service, setService] = useState<string>('');
   const [processingTime, setProcessingTime] = useState<number>(0);
+  const [matchId, setMatchId] = useState('');
+  const [transcriptionService, setTranscriptionService] = useState<'assemblyai' | 'gemini'>('assemblyai');
+  
+  // Configuration State
   const [needsSpeakerLabels, setNeedsSpeakerLabels] = useState(false);
   const [extractEvents, setExtractEvents] = useState(true);
   const [saveToDatabase, setSaveToDatabase] = useState(false);
-  const [matchId, setMatchId] = useState('');
-  const [transcriptionService, setTranscriptionService] = useState<'assemblyai' | 'gemini'>('assemblyai');
+
+  // --- UPDATED STATE & HOOKS ---
+  // Replaced `roster` state with `selectedClubId`
+  const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
   const { toast } = useToast();
-  const { players } = usePlayers();
+  // Use our updated hook. It provides the player list and the function to fetch them.
+  const { players, fetchPlayersByClubId } = usePlayers();
+
+  // This effect automatically fetches players whenever a new club is selected.
+  useEffect(() => {
+    fetchPlayersByClubId(selectedClubId);
+  }, [selectedClubId, fetchPlayersByClubId]);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
   };
 
-  // Convert EventData to SoccerEvent format for display
+  // Convert backend EventData to frontend SoccerEvent format for display
   const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
     let protocolType: SoccerEvent['protocolType'] = 'Player — Event';
-    
     if (eventData.target_player) {
       protocolType = 'Player A — Event — Player B';
     } else if (eventData.team && !eventData.player_name) {
       protocolType = 'Team — Event';
     }
-
     return {
       type: eventData.event_type as any,
       protocolType,
@@ -96,7 +107,7 @@ const Index = () => {
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
-          addLog(`Processing audio with ${transcriptionService.toUpperCase()}...`, 'processing');
+    addLog(`Processing audio with ${transcriptionService.toUpperCase()}...`, 'processing');
     setStatus('Processing audio...');
 
     try {
@@ -111,17 +122,15 @@ const Index = () => {
         reader.readAsDataURL(audioBlob);
       });
 
-      // Estimate audio duration (3 second chunks)
       const audioDuration = 3000;
-
       addLog(`Sending to ${transcriptionService.toUpperCase()} transcription...`, 'processing');
 
-      // Call the transcription system
+      // Call the backend function, now passing 'clubId' instead of 'roster'
       const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
         body: {
           audioData: base64Audio,
           languageCode: language,
-          roster: roster,
+          clubId: selectedClubId, // <-- UPDATED
           audioDuration: audioDuration,
           needsSpeakerLabels: needsSpeakerLabels,
           extractEvents: extractEvents,
@@ -132,51 +141,41 @@ const Index = () => {
       });
 
       if (error) throw error;
-
       const result = data as TranscriptionResult;
 
-      // Update transcription
+      // Update UI with results
       setTranscription(prev => prev + ' ' + result.text);
       if (result.enhanced) {
         setEnhancedTranscription(prev => prev + ' ' + result.enhanced);
       }
       setService(result.service);
       setProcessingTime(result.processingTime);
+      addLog(`Transcribed using ${result.service.toUpperCase()} (${(result.processingTime / 1000).toFixed(2)}s)`, 'success');
 
-      addLog(
-        `Transcribed using ${result.service.toUpperCase()} (${(result.processingTime / 1000).toFixed(2)}s)`,
-        'success'
-      );
-
-      // Handle extracted events
+      // Handle extracted events from backend
       if (result.events && result.events.length > 0) {
         addLog(`Detected ${result.events.length} event(s)`, 'success');
-        
         const newEvents = result.events.map(convertToSoccerEvent);
         setEvents(prev => [...newEvents, ...prev]);
-
         result.events.forEach(event => {
           addLog(`${event.event_type}: ${event.player_name || 'Team'} - ${event.transcription.substring(0, 50)}...`, 'info');
         });
       } else if (extractEvents && result.text) {
-        // Fallback: Use enhanced event detection with database if no events from backend
+        // Fallback: Use local event detection with the player list from the hook
         const textToAnalyze = result.enhanced || result.text;
         const detectedEvents = detectEventsWithDatabase(textToAnalyze, language, players);
-        
         if (detectedEvents.length > 0) {
-          addLog(`Detected ${detectedEvents.length} event(s) using database`, 'success');
+          addLog(`Detected ${detectedEvents.length} event(s) using local database`, 'success');
           setEvents(prev => [...detectedEvents, ...prev]);
         }
       }
 
-      // Database save confirmation
       if (result.saved) {
         addLog('Events saved to database ✓', 'success');
       }
 
       setIsProcessing(false);
       setStatus('Ready');
-
       toast({
         title: "Processing complete",
         description: `${result.service.toUpperCase()} • ${(result.processingTime / 1000).toFixed(2)}s${result.events ? ` • ${result.events.length} events` : ''}`,
@@ -220,7 +219,6 @@ const Index = () => {
             <p className="text-lg text-muted-foreground">
               Choose between AssemblyAI or Gemini for transcription with automatic event detection
             </p>
-            
             {service && (
               <div className="flex items-center justify-center gap-2">
                 <Badge variant="outline" className="text-sm">
@@ -238,119 +236,72 @@ const Index = () => {
           {/* Configuration Panel */}
           <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-6 shadow-lg space-y-6">
             <h3 className="text-xl font-semibold">Configuration</h3>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Transcription Service Selector */}
               <div className="space-y-2">
                 <Label>Transcription Service</Label>
-                <Select 
-                  onValueChange={(value: 'assemblyai' | 'gemini') => setTranscriptionService(value)} 
-                  defaultValue={transcriptionService}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select onValueChange={(value: 'assemblyai' | 'gemini') => setTranscriptionService(value)} defaultValue={transcriptionService}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="assemblyai">🎯 AssemblyAI (Accurate)</SelectItem>
                     <SelectItem value="gemini">🤖 Gemini (Fast)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {transcriptionService === 'gemini' 
-                    ? 'Gemini: Faster processing, direct audio analysis'
-                    : 'AssemblyAI: High accuracy, supports speaker labels'}
+                  {transcriptionService === 'gemini' ? 'Gemini: Faster processing, direct audio analysis' : 'AssemblyAI: High accuracy, supports speaker labels'}
                 </p>
               </div>
-
-              {/* Language Selector */}
               <div className="space-y-2">
                 <Label>Language</Label>
                 <Select onValueChange={setLanguage} defaultValue={language}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="en">🇬🇧 English</SelectItem>
                     <SelectItem value="ar">🇸🇦 Arabic</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Language Selector - Removed, now above */}
-
-              {/* Match ID (required for database save) */}
               <div className="space-y-2">
                 <Label>Match ID (optional)</Label>
-                <Input
-                  placeholder="Enter match ID for database save"
-                  value={matchId}
-                  onChange={(e) => setMatchId(e.target.value)}
-                />
+                <Input placeholder="Enter match ID for database save" value={matchId} onChange={(e) => setMatchId(e.target.value)} />
               </div>
             </div>
-
-            {/* Features Toggle */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>Speaker Labels</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Identify different speakers (AssemblyAI only)
-                  </p>
+                  <p className="text-sm text-muted-foreground">Identify different speakers (AssemblyAI only)</p>
                 </div>
-                <Switch
-                  checked={needsSpeakerLabels}
-                  onCheckedChange={setNeedsSpeakerLabels}
-                  disabled={transcriptionService === 'gemini'}
-                />
+                <Switch checked={needsSpeakerLabels} onCheckedChange={setNeedsSpeakerLabels} disabled={transcriptionService === 'gemini'} />
               </div>
-
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>Extract Events</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically detect soccer events (GOAL, PASS, etc.)
-                  </p>
+                  <p className="text-sm text-muted-foreground">Automatically detect soccer events (GOAL, PASS, etc.)</p>
                 </div>
-                <Switch
-                  checked={extractEvents}
-                  onCheckedChange={setExtractEvents}
-                />
+                <Switch checked={extractEvents} onCheckedChange={setExtractEvents} />
               </div>
-
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
                   <Label>Save to Database</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Store events in match_events table (requires Match ID)
-                  </p>
+                  <p className="text-sm text-muted-foreground">Store events in match_events table (requires Match ID)</p>
                 </div>
-                <Switch
-                  checked={saveToDatabase}
-                  onCheckedChange={setSaveToDatabase}
-                  disabled={!matchId}
-                />
+                <Switch checked={saveToDatabase} onCheckedChange={setSaveToDatabase} disabled={!matchId} />
               </div>
             </div>
-
-            {/* Roster Input */}
             <div className="space-y-2">
               <Label>Team Roster (optional)</Label>
-              <p className="text-sm text-muted-foreground mb-2">
-                Add player names to improve transcription accuracy
-              </p>
-              <RosterInput roster={roster} onRosterChange={setRoster} />
+              <p className="text-sm text-muted-foreground mb-2">Select a club to provide its player roster, improving transcription accuracy.</p>
+              {/* --- UPDATED RosterInput PROPS --- */}
+              <RosterInput 
+                selectedClubId={selectedClubId} 
+                onClubSelected={setSelectedClubId} 
+              />
             </div>
           </div>
 
           {/* Audio Recorder */}
           <div className="bg-card rounded-lg border-2 border-pitch-green/20 p-8 shadow-lg">
-            <AudioRecorder
-              onRecordingComplete={handleRecordingComplete}
-              isProcessing={isProcessing}
-            />
+            <AudioRecorder onRecordingComplete={handleRecordingComplete} isProcessing={isProcessing} />
           </div>
 
           {/* Results Grid */}
@@ -374,7 +325,7 @@ const Index = () => {
             <div className="flex justify-center">
               <button
                 onClick={handleClearAll}
-                className="px-6 py-2 bg-destructive text-white rounded-md hover:bg-destructive/90 transition-colors"
+                className="px-6 py-2 bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 transition-colors"
               >
                 Clear All Data
               </button>
