@@ -2,23 +2,32 @@ import { NavLink as RouterNavLink, NavLinkProps } from "react-router-dom";
 import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
-interface NavLinkCompatProps extends Omit<NavLinkProps, "className"> {
-  className?: string;
-  activeClassName?: string;
-  pendingClassName?: string;
-}
+// Update the props to correctly extend NavLinkProps
+interface NavLinkCompatProps extends NavLinkProps {}
 
 const NavLink = forwardRef<HTMLAnchorElement, NavLinkCompatProps>(
-  ({ className, activeClassName, pendingClassName, to, ...props }, ref) => {
+  ({ className, children, ...props }, ref) => {
     return (
       <RouterNavLink
         ref={ref}
-        to={to}
-        className={({ isActive, isPending }) =>
-          cn(className, isActive && activeClassName, isPending && pendingClassName)
-        }
         {...props}
-      />
+        className={({ isActive, isPending }) =>
+          cn(
+            // If the passed className is a function, call it with the state
+            typeof className === "function"
+              ? className({ isActive, isPending })
+              // Otherwise, just use the string value
+              : className,
+            // You can still add your own logic here if you want to enforce
+            // specific active or pending styles as a fallback.
+            // For example:
+            // isActive && "font-bold",
+            // isPending && "opacity-50"
+          )
+        }
+      >
+        {children}
+      </RouterNavLink>
     );
   },
 );
