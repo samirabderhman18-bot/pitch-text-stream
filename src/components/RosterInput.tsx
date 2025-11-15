@@ -26,6 +26,7 @@ interface Player {
   overall_rating: number | null;
   age: number | null;
   nationality: string | null;
+  image_url: string | null;
 }
 
 interface RosterInputProps {
@@ -105,7 +106,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
     try {
       const { data: playersData, error } = await supabase
         .from('players')
-        .select('id, name, club_id, position, overall_rating, age, nationality')
+        .select('id, name, club_id, position, overall_rating, age, nationality, image_url')
         .eq('club_id', clubId)
         .order('name', { ascending: true });
 
@@ -288,14 +289,33 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
                 >
                   {/* Position Badge - Top Right */}
                   {player.position && (
-                    <div className="absolute -top-1 -right-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-sm">
+                    <div className="absolute -top-1 -right-1 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md shadow-sm z-10">
                       {player.position}
                     </div>
                   )}
                   
-                  {/* Avatar Circle - Smaller */}
-                  <div className="w-8 h-8 mx-auto mb-1 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm shadow-md">
-                    {player.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase()}
+                  {/* Player Image or Avatar */}
+                  <div className="w-12 h-12 mx-auto mb-1 rounded-full overflow-hidden bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-md ring-2 ring-white dark:ring-gray-800">
+                    {player.image_url ? (
+                      <img 
+                        src={player.image_url} 
+                        alt={player.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          // Fallback to initials if image fails to load
+                          e.currentTarget.style.display = 'none';
+                          if (e.currentTarget.nextSibling) {
+                            (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex';
+                          }
+                        }}
+                      />
+                    ) : null}
+                    <div 
+                      className="w-full h-full flex items-center justify-center text-white font-bold text-sm"
+                      style={{ display: player.image_url ? 'none' : 'flex' }}
+                    >
+                      {player.name.split(' ').map(n => n.charAt(0)).slice(0, 2).join('').toUpperCase()}
+                    </div>
                   </div>
                   
                   {/* Player Name - Compact */}
