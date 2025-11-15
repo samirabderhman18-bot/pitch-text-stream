@@ -132,33 +132,61 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
     if (!file) return;
 
     setIsUploadingJson(true);
+    
+    toast({
+      title: 'Uploading...',
+      description: 'Reading JSON file and preparing data...',
+    });
+
     try {
       const text = await file.text();
       const jsonData = JSON.parse(text);
       
+      // Validate JSON structure
       if (!jsonData.PlayerData || !Array.isArray(jsonData.PlayerData)) {
         throw new Error('Invalid JSON format. Expected a root object with a "PlayerData" array.');
       }
 
+      toast({
+        title: 'Processing...',
+        description: `Uploading ${jsonData.PlayerData.length} players to database...`,
+      });
+
+      // Call edge function to process and insert data
       const { data, error } = await supabase.functions.invoke('upload-players', {
         body: { playerData: jsonData.PlayerData }
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edge function error:', error);
+        throw new Error(error.message || 'Failed to upload players to database');
+      }
 
+      // Success feedback
       toast({
-        title: 'Upload Successful',
-        description: `Successfully processed ${data.count} players. You can now select a club to load their roster.`,
+        title: 'Upload Successful! ✓',
+        description: `${data.playersInserted || data.count || jsonData.PlayerData.length} players and their teams have been saved to the database.`,
       });
       
-      // Refresh clubs list after upload
+      // Refresh clubs list to show newly added teams
+      toast({
+        title: 'Refreshing...',
+        description: 'Loading updated club list...',
+      });
+
       const { data: clubsData, error: clubsError } = await supabase
         .from('teams')
         .select('id, name, logo_url')
         .order('name', { ascending: true });
 
-      if (!clubsError && clubsData) {
+      if (clubsError) {
+        console.error('Error refreshing clubs:', clubsError);
+      } else if (clubsData) {
         setClubs(clubsData);
+        toast({
+          title: 'Ready!',
+          description: `Club list updated. ${clubsData.length} clubs available.`,
+        });
       }
       
     } catch (error) {
