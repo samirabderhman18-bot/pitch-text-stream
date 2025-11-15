@@ -18,6 +18,7 @@ interface TranscriptionRequest {
   audioDuration?: number;
   needsSpeakerLabels?: boolean;
   webhookUrl?: string;
+  transcriptionService?: 'assemblyai' | 'gemini';
 }
 
 interface TranscriptionResult {
@@ -29,8 +30,11 @@ interface TranscriptionResult {
 }
 
 // Service selector based on requirements
-function selectTranscriptionService(req: TranscriptionRequest): 'huggingface' | 'assemblyai' {
-  // Always use AssemblyAI as it's more reliable
+function selectTranscriptionService(req: TranscriptionRequest): 'huggingface' | 'assemblyai' | 'gemini' {
+  // Allow client to choose, default to assemblyai
+  if (req.transcriptionService) {
+    return req.transcriptionService;
+  }
   // HuggingFace Whisper endpoint has been deprecated
   return 'assemblyai';
 }
@@ -181,6 +185,66 @@ async function transcribeWithAssemblyAI(
   throw new Error('Transcription timeout');
 }
 
+// Gemini transcription
+async function transcribeWithGemini(
+  audioData: string,
+  language: string = 'en'
+): Promise<string> {
+  const apiKey = Deno.env.get('LOVABLE_API_KEY');
+  if (!apiKey) {
+    console.warn('Gemini API key not configured, skipping transcription');
+    return '';
+  }
+
+  console.log('Transcribing with Gemini AI...');
+
+  const systemPrompt = language === 'ar'
+    ? 'أنت مساعد متخصص في تحويل الكلام إلى نص لتعليقات كرة القدم العربية.'
+    : 'You are a specialized speech-to-text assistant for English soccer commentary.';
+
+  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'google/gemini-2.5-flash-lite',
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Transcribe the audio and return only the text.',
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:audio/webm;base64,${audioData}`,
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('Gemini transcription failed:', error);
+    throw new Error(`Gemini transcription failed: ${error}`);
+  }
+
+  const result = await response.json();
+  return result.choices[0].message.content;
+}
+
+
 // Enhance transcription with Gemini AI
 async function enhanceWithGemini(
   text: string, 
@@ -210,7 +274,7 @@ async function enhanceWithGemini(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gemini-2.5-flash-lite',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Correct this transcription: "${text}"` }
@@ -232,7 +296,7 @@ async function enhanceWithGemini(
 async function processTranscription(req: TranscriptionRequest): Promise<TranscriptionResult> {
   const startTime = Date.now();
   const service = selectTranscriptionService(req);
-  const languageCode = req.languageCode || 'en';
+  const languageCode = req.languageCode?.toLowerCase().startsWith('ar') ? 'ar' : 'en';
   
   console.log(`Selected service: ${service}`);
   
@@ -242,6 +306,8 @@ async function processTranscription(req: TranscriptionRequest): Promise<Transcri
   // Step 1: Transcribe
   if (service === 'huggingface') {
     transcriptionText = await transcribeWithHuggingFace(req.audioData);
+  } else if (service === 'gemini') {
+    transcriptionText = await transcribeWithGemini(req.audioData, languageCode);
   } else {
     const result = await transcribeWithAssemblyAI(
       req.audioData,
