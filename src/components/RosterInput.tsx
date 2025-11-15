@@ -55,9 +55,12 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
       const { data: clubsData, error: clubsError } = await supabase
         .from('clubs')
         .select('id, name')
-        .order('name');
+        .order('name', { ascending: true });
 
-      if (clubsError) throw clubsError;
+      if (clubsError) {
+        console.error('Error loading clubs:', clubsError);
+        throw clubsError;
+      }
 
       if (clubsData && clubsData.length > 0) {
         // Get player count for each club
@@ -67,6 +70,10 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
               .from('players')
               .select('*', { count: 'exact', head: true })
               .eq('club_id', club.id);
+
+            if (error) {
+              console.error(`Error counting players for club ${club.id}:`, error);
+            }
 
             return {
               id: club.id,
@@ -87,6 +94,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         description: "Failed to load clubs. Please try again.",
         variant: "destructive",
       });
+      setClubs([]);
     } finally {
       setIsLoadingClubs(false);
     }
@@ -99,9 +107,12 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         .from('players')
         .select('id, name, club_id, position, overall_rating, age, nationality')
         .eq('club_id', clubId)
-        .order('name');
+        .order('name', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error loading players:', error);
+        throw error;
+      }
 
       setPlayers(playersData || []);
     } catch (error) {
@@ -111,6 +122,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         description: "Failed to load players. Please try again.",
         variant: "destructive",
       });
+      setPlayers([]);
     } finally {
       setIsLoadingPlayers(false);
     }
