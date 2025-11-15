@@ -8,10 +8,15 @@ import { supabase } from '@/integrations/supabase/client';
  */
 interface Player {
   id: number;
-  forename: string;
-  surname: string;
-  full_name: string;
+  name: string;
+  club_id: number;
+  position: string | null;
+  overall_rating: number | null;
+  age: number | null;
+  nationality: string | null;
   image_url: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /**
@@ -37,13 +42,14 @@ export const usePlayers = () => {
 
     setIsLoading(true);
     setError(null);
+
     try {
-      // Fetch all players where the 'team_id' column matches the provided clubId.
+      // Fetch all players where the 'club_id' column matches the provided clubId.
       const { data, error } = await supabase
         .from('players')
         .select('*')
-        .eq('team_id', clubId)
-        .order('surname', { ascending: true });
+        .eq('club_id', clubId)
+        .order('name', { ascending: true });
 
       if (error) throw error;
       
@@ -63,13 +69,15 @@ export const usePlayers = () => {
   const fetchAllPlayers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+
     try {
       const { data, error } = await supabase
         .from('players')
         .select('*')
-        .order('surname', { ascending: true });
+        .order('name', { ascending: true });
 
       if (error) throw error;
+
       setPlayers(data || []);
     } catch (err) {
       console.error('Error fetching all players:', err);
@@ -87,7 +95,7 @@ export const usePlayers = () => {
     if (!query) return players;
     const lowerQuery = query.toLowerCase();
     return players.filter(player =>
-      player.full_name.toLowerCase().includes(lowerQuery)
+      player.name.toLowerCase().includes(lowerQuery)
     );
   };
 
