@@ -18,6 +18,12 @@ interface Club {
   playerCount: number;
 }
 
+interface Player {
+  id: number;
+  name: string;
+  club_id: number;
+}
+
 interface RosterInputProps {
   selectedClubId: number | null;
   onClubSelected: (clubId: number | null) => void;
@@ -25,7 +31,9 @@ interface RosterInputProps {
 
 const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
   const [clubs, setClubs] = useState<Club[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
   const [isLoadingClubs, setIsLoadingClubs] = useState(false);
+  const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [isUploadingJson, setIsUploadingJson] = useState(false);
   const [selectedClubName, setSelectedClubName] = useState('');
   const [playerCount, setPlayerCount] = useState(0);
@@ -80,7 +88,31 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
     }
   };
 
-  const handleClubSelect = (clubIdString: string) => {
+  const loadPlayers = async (clubId: number) => {
+    setIsLoadingPlayers(true);
+    try {
+      const { data: playersData, error } = await supabase
+        .from('players')
+        .select('id, name, club_id')
+        .eq('club_id', clubId)
+        .order('name');
+
+      if (error) throw error;
+
+      setPlayers(playersData || []);
+    } catch (error) {
+      console.error('Error loading players:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load players. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingPlayers(false);
+    }
+  };
+
+  const handleClubSelect = async (clubIdString: string) => {
     const clubId = parseInt(clubIdString);
     const club = clubs.find(c => c.id === clubId);
     
@@ -88,6 +120,9 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
       onClubSelected(clubId);
       setSelectedClubName(club.name);
       setPlayerCount(club.playerCount);
+      
+      // Load players for this club
+      await loadPlayers(clubId);
       
       toast({
         title: "Club selected",
@@ -100,6 +135,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
     onClubSelected(null);
     setSelectedClubName('');
     setPlayerCount(0);
+    setPlayers([]);
   };
 
   const handleJsonUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -205,7 +241,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
       </div>
       
       {selectedClubId && (
-        <div className="space-y-2">
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="gap-2">
@@ -222,6 +258,29 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
               Clear
             </Button>
           </div>
+          
+          {isLoadingPlayers ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : players.length > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-96 overflow-y-auto p-2 border rounded-lg">
+              {players.map((player) => (
+                <div
+                  key={player.id}
+                  className="p-3 bg-secondary/50 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+                >
+                  <p className="text-sm font-medium text-center truncate" title={player.name}>
+                    {player.name}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No players found for this club
+            </p>
+          )}
         </div>
       )}
     </div>
