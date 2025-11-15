@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Mic, Square } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { convertToWav } from '@/utils/audio-converter';
 
 interface AudioRecorderProps {
   onRecordingComplete: (audioBlob: Blob) => void;
@@ -14,10 +15,18 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps
   const chunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
 
-  const processAudioChunk = () => {
+  const processAudioChunk = async () => {
     if (chunksRef.current.length > 0 && !isProcessing) {
       const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      onRecordingComplete(audioBlob);
+      try {
+        // Convert to WAV format for better compatibility with transcription services
+        const wavBlob = await convertToWav(audioBlob);
+        onRecordingComplete(wavBlob);
+      } catch (error) {
+        console.error('Failed to convert audio:', error);
+        // Fallback to original blob if conversion fails
+        onRecordingComplete(audioBlob);
+      }
       chunksRef.current = [];
     }
   };
