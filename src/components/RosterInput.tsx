@@ -240,7 +240,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         </Popover>
       </div>
       
-      {roster.length > 0 && (
+      {roster && roster.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
