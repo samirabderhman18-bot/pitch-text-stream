@@ -29,15 +29,8 @@ interface TranscriptionResult {
 
 // Service selector based on requirements
 function selectTranscriptionService(req: TranscriptionRequest): 'huggingface' | 'assemblyai' {
-  const duration = req.audioDuration || 0;
-  const needsSpeakers = req.needsSpeakerLabels || false;
-  
-  // Use HuggingFace for short clips without speaker needs
-  if (duration < SHORT_AUDIO_THRESHOLD && !needsSpeakers) {
-    return 'huggingface';
-  }
-  
-  // Use AssemblyAI for longer clips or when speaker labels needed
+  // Always use AssemblyAI as it's more reliable
+  // HuggingFace Whisper endpoint has been deprecated
   return 'assemblyai';
 }
 
