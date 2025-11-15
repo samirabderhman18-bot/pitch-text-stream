@@ -44,20 +44,56 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
     
     setIsSearching(true);
     try {
-      const { data, error } = await supabase.functions.invoke('fetch-team-roster', {
+      // Search teams in the database by club_id or name
+      // First, let's get unique club_ids from players table
+      const { data: playerData, error: playerError } = await supabase
+        .from('players')
+        .select('club_id')
+        .not('club_id', 'is', null);
+
+      if (playerError) throw playerError;
+
+      // Get unique club_ids
+      const uniqueClubIds = [...new Set(playerData?.map(p => p.club_id) || [])];
+
+      if (uniqueClubIds.length === 0) {
+        toast({
+          title: "No teams found",
+          description: "No teams in the database yet. Upload players first.",
+          variant: "destructive",
+        });
+        setIsSearching(false);
+        return;
+      }
+
+      // Now search for these teams in the API
+      const { data: apiData, error: apiError } = await supabase.functions.invoke('fetch-team-roster', {
         body: { action: 'search-teams', query: searchQuery },
       });
 
-      if (error) throw error;
+      if (apiError) throw apiError;
 
-      if (data.response && data.response.length > 0) {
-        setTeams(data.response.map((item: any) => ({
-          id: item.team.id,
-          name: item.team.name,
-          logo: item.team.logo,
-          country: item.team.country,
-        })));
-        setOpen(true);
+      if (apiData.response && apiData.response.length > 0) {
+        // Filter teams that exist in our database (have players with matching club_id)
+        const teamsWithPlayers = apiData.response.filter((item: any) => 
+          uniqueClubIds.includes(item.team.id)
+        );
+
+        if (teamsWithPlayers.length > 0) {
+          setTeams(teamsWithPlayers.map((item: any) => ({
+            id: item.team.id,
+            name: item.team.name,
+            logo: item.team.logo,
+            country: item.team.country,
+          })));
+          setOpen(true);
+        } else {
+          toast({
+            title: "No teams found",
+            description: "No teams with players in the database match your search",
+            variant: "destructive",
+          });
+        }
       } else {
         toast({
           title: "No teams found",
