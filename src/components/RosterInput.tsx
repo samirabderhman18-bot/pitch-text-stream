@@ -39,49 +39,34 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
   const loadClubs = async () => {
     setIsLoadingClubs(true);
     try {
-      // Get all players with club_id
-      const { data: playerData, error: playerError } = await supabase
-        .from('players')
-        .select('club_id')
-        .not('club_id', 'is', null);
+      // Query clubs table directly - no API call needed
+      const { data: clubsData, error: clubsError } = await supabase
+        .from('clubs')
+        .select('id, name')
+        .order('name');
 
-      if (playerError) throw playerError;
+      if (clubsError) throw clubsError;
 
-      // Count players per club
-      const clubCounts = new Map<number, number>();
-      playerData?.forEach(player => {
-        const count = clubCounts.get(player.club_id) || 0;
-        clubCounts.set(player.club_id, count + 1);
-      });
+      if (clubsData && clubsData.length > 0) {
+        // Get player count for each club
+        const clubsWithCounts = await Promise.all(
+          clubsData.map(async (club) => {
+            const { count, error } = await supabase
+              .from('players')
+              .select('*', { count: 'exact', head: true })
+              .eq('club_id', club.id);
 
-      // Get unique club IDs
-      const uniqueClubIds = Array.from(clubCounts.keys());
+            return {
+              id: club.id,
+              name: club.name,
+              playerCount: error ? 0 : (count || 0),
+            };
+          })
+        );
 
-      if (uniqueClubIds.length === 0) {
+        setClubs(clubsWithCounts);
+      } else {
         setClubs([]);
-        setIsLoadingClubs(false);
-        return;
-      }
-
-      // Fetch club details from API
-      const { data: apiData, error: apiError } = await supabase.functions.invoke('fetch-team-roster', {
-        body: { action: 'search-teams', query: '' }, // Empty query to get all
-      });
-
-      if (apiError) throw apiError;
-
-      if (apiData.response && apiData.response.length > 0) {
-        // Filter and map clubs that exist in our database
-        const clubsList = apiData.response
-          .filter((item: any) => uniqueClubIds.includes(item.team.id))
-          .map((item: any) => ({
-            id: item.team.id,
-            name: item.team.name,
-            playerCount: clubCounts.get(item.team.id) || 0,
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-
-        setClubs(clubsList);
       }
     } catch (error) {
       console.error('Error loading clubs:', error);
