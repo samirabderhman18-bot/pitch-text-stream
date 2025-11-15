@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { X, Search, Users, Upload, Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Search, Users, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -26,17 +27,18 @@ interface Team {
 }
 
 interface RosterInputProps {
-  roster: string[];
-  onRosterChange: (roster: string[]) => void;
+  selectedClubId: number | null;
+  onClubSelected: (clubId: number | null) => void;
 }
 
-const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
+const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [teams, setTeams] = useState<Team[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
   const [isUploadingJson, setIsUploadingJson] = useState(false);
   const [open, setOpen] = useState(false);
+  const [selectedTeamName, setSelectedTeamName] = useState('');
+  const [playerCount, setPlayerCount] = useState(0);
   const { toast } = useToast();
 
   const searchTeams = async () => {
@@ -113,46 +115,41 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
     }
   };
 
-  const loadTeamPlayers = async (teamId: number, teamName: string) => {
-    setIsLoadingPlayers(true);
+  const selectTeam = async (teamId: number, teamName: string) => {
     try {
-      // Query the database for players from this club
+      // Get player count for this team
       const { data, error } = await supabase
         .from('players')
-        .select('id')
+        .select('id', { count: 'exact' })
         .eq('club_id', teamId);
 
       if (error) throw error;
 
-      if (data && data.length > 0) {
-        const playerIds = data.map((player: any) => player.id.toString());
-        onRosterChange(playerIds);
-        toast({
-          title: "Roster loaded",
-          description: `Loaded ${playerIds.length} players from ${teamName}`,
-        });
-        setOpen(false);
-      } else {
-        toast({
-          title: "No players found",
-          description: "This club has no players in the database",
-          variant: "destructive",
-        });
-      }
+      const count = data?.length || 0;
+      
+      onClubSelected(teamId);
+      setSelectedTeamName(teamName);
+      setPlayerCount(count);
+      setOpen(false);
+      
+      toast({
+        title: "Team selected",
+        description: `${teamName} - ${count} players available`,
+      });
     } catch (error) {
-      console.error('Error loading players:', error);
+      console.error('Error selecting team:', error);
       toast({
         title: "Error",
-        description: "Failed to load roster. Please try again.",
+        description: "Failed to select team. Please try again.",
         variant: "destructive",
       });
-    } finally {
-      setIsLoadingPlayers(false);
     }
   };
 
-  const clearRoster = () => {
-    onRosterChange([]);
+  const clearSelection = () => {
+    onClubSelected(null);
+    setSelectedTeamName('');
+    setPlayerCount(0);
   };
 
   const handleJsonUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,10 +175,6 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         title: 'Success',
         description: `Inserted ${data.playersInserted} players, updated ${data.playersUpdated} players`,
       });
-
-      // Load the player IDs into the roster
-      const playerIds = jsonData.PlayerData.map((p: any) => p.ID.toString());
-      onRosterChange(playerIds);
     } catch (error) {
       console.error('JSON upload error:', error);
       toast({
@@ -256,8 +249,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
                   {teams.map((team) => (
                     <CommandItem
                       key={team.id}
-                      onSelect={() => loadTeamPlayers(team.id, team.name)}
-                      disabled={isLoadingPlayers}
+                      onSelect={() => selectTeam(team.id, team.name)}
                       className="cursor-pointer"
                     >
                       <div className="flex items-center gap-3 w-full">
@@ -276,20 +268,22 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         </Popover>
       </div>
       
-      {roster && roster.length > 0 && (
+      {selectedClubId && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Users className="w-4 h-4" />
-              <span>{roster.length} players selected</span>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="gap-2">
+                <Users className="w-3 h-3" />
+                {selectedTeamName} - {playerCount} players
+              </Badge>
             </div>
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={clearRoster}
+              onClick={clearSelection}
               className="h-8 text-xs"
             >
-              Clear All
+              Clear
             </Button>
           </div>
         </div>
