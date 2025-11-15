@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { X, Search, Users } from 'lucide-react';
+import { X, Search, Users, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -36,6 +36,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
+  const [isUploadingJson, setIsUploadingJson] = useState(false);
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
 
@@ -123,8 +124,81 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
     onRosterChange([]);
   };
 
+  const handleJsonUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingJson(true);
+    try {
+      const text = await file.text();
+      const jsonData = JSON.parse(text);
+      
+      if (!jsonData.PlayerData || !Array.isArray(jsonData.PlayerData)) {
+        throw new Error('Invalid JSON format. Expected {PlayerData: [...]}');
+      }
+
+      const { data, error } = await supabase.functions.invoke('upload-players', {
+        body: { playerData: jsonData.PlayerData }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: `Uploaded ${data.count} players to database`,
+      });
+
+      // Load the players into the roster
+      const playerNames = jsonData.PlayerData.map((p: any) => 
+        `${p.Forename} ${p.Surname}`
+      );
+      onRosterChange(playerNames);
+    } catch (error) {
+      console.error('JSON upload error:', error);
+      toast({
+        title: 'Upload failed',
+        description: error instanceof Error ? error.message : 'Failed to upload JSON file',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUploadingJson(false);
+      event.target.value = '';
+    }
+  };
+
   return (
     <div className="space-y-4">
+      <div className="flex gap-2 mb-2">
+        <label htmlFor="json-upload">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isUploadingJson}
+            onClick={() => document.getElementById('json-upload')?.click()}
+          >
+            {isUploadingJson ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload className="mr-2 h-4 w-4" />
+                Upload JSON
+              </>
+            )}
+          </Button>
+        </label>
+        <input
+          id="json-upload"
+          type="file"
+          accept=".json"
+          onChange={handleJsonUpload}
+          className="hidden"
+        />
+      </div>
+      
       <div className="flex gap-2">
         <Input
           placeholder="Search for a team..."

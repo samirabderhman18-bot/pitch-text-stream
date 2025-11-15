@@ -7,6 +7,8 @@ import RosterInput from '@/components/RosterInput';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { SoccerEvent } from '@/types/soccer-events';
+import { usePlayers } from '@/hooks/usePlayers';
+import { detectEventsWithDatabase } from '@/utils/enhanced-event-detector';
 
 import {
   Select,
@@ -63,6 +65,7 @@ const Index = () => {
   const [matchId, setMatchId] = useState('');
   const [transcriptionService, setTranscriptionService] = useState<'assemblyai' | 'gemini'>('assemblyai');
   const { toast } = useToast();
+  const { players } = usePlayers();
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
@@ -155,6 +158,15 @@ const Index = () => {
         result.events.forEach(event => {
           addLog(`${event.event_type}: ${event.player_name || 'Team'} - ${event.transcription.substring(0, 50)}...`, 'info');
         });
+      } else if (extractEvents && result.text) {
+        // Fallback: Use enhanced event detection with database if no events from backend
+        const textToAnalyze = result.enhanced || result.text;
+        const detectedEvents = detectEventsWithDatabase(textToAnalyze, language, players);
+        
+        if (detectedEvents.length > 0) {
+          addLog(`Detected ${detectedEvents.length} event(s) using database`, 'success');
+          setEvents(prev => [...detectedEvents, ...prev]);
+        }
       }
 
       // Database save confirmation

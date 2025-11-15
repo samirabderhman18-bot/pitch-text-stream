@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,8 +21,23 @@ serve(async (req) => {
 
     console.log('Enhancing transcription with Gemini AI');
 
-    const rosterContext = roster && roster.length > 0 
-      ? `\n\nTeam Roster: ${roster.join(', ')}`
+    // Fetch players from database
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
+    const { data: dbPlayers } = await supabaseClient
+      .from('players')
+      .select('forename, surname, full_name');
+
+    const allPlayers = dbPlayers ? dbPlayers.map(p => p.full_name) : [];
+    const combinedRoster = roster && roster.length > 0 ? [...new Set([...roster, ...allPlayers])] : allPlayers;
+    
+    console.log(`Total players available: ${combinedRoster.length}`);
+
+    const rosterContext = combinedRoster.length > 0 
+      ? `\n\nTeam Roster: ${combinedRoster.slice(0, 100).join(', ')}`
       : '';
 
     const systemPrompt = language === 'ar'
