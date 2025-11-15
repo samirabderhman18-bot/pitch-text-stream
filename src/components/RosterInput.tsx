@@ -22,6 +22,10 @@ interface Player {
   id: number;
   name: string;
   club_id: number;
+  position: string | null;
+  overall_rating: number | null;
+  age: number | null;
+  nationality: string | null;
 }
 
 interface RosterInputProps {
@@ -93,7 +97,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
     try {
       const { data: playersData, error } = await supabase
         .from('players')
-        .select('id, name, club_id')
+        .select('id, name, club_id, position, overall_rating, age, nationality')
         .eq('club_id', clubId)
         .order('name');
 
@@ -264,15 +268,50 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : players.length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-96 overflow-y-auto p-2 border rounded-lg">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 max-h-[600px] overflow-y-auto p-2">
               {players.map((player) => (
                 <div
                   key={player.id}
-                  className="p-3 bg-secondary/50 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+                  className="group relative bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl p-3 hover:from-primary/10 hover:to-primary/20 transition-all duration-300 cursor-pointer shadow-sm hover:shadow-md border border-primary/10 hover:border-primary/30"
                 >
-                  <p className="text-sm font-medium text-center truncate" title={player.name}>
+                  {/* Position Badge */}
+                  {player.position && (
+                    <div className="absolute -top-2 -right-2 bg-primary text-primary-foreground text-xs font-bold px-2 py-0.5 rounded-full shadow-sm">
+                      {player.position}
+                    </div>
+                  )}
+                  
+                  {/* Player Avatar Circle */}
+                  <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center text-primary font-bold text-lg shadow-inner">
+                    {player.name.charAt(0).toUpperCase()}
+                  </div>
+                  
+                  {/* Player Name */}
+                  <p className="text-xs font-semibold text-center mb-1 line-clamp-2 min-h-[2rem]" title={player.name}>
                     {player.name}
                   </p>
+                  
+                  {/* Stats Row */}
+                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    {player.overall_rating && (
+                      <span className="bg-primary/10 px-1.5 py-0.5 rounded font-medium">
+                        {player.overall_rating}
+                      </span>
+                    )}
+                    {player.age && (
+                      <span className="opacity-70">{player.age}y</span>
+                    )}
+                  </div>
+                  
+                  {/* Nationality */}
+                  {player.nationality && (
+                    <p className="text-[10px] text-center text-muted-foreground mt-1 truncate" title={player.nationality}>
+                      {player.nationality}
+                    </p>
+                  )}
+                  
+                  {/* Hover Effect Overlay */}
+                  <div className="absolute inset-0 rounded-xl bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                 </div>
               ))}
             </div>
