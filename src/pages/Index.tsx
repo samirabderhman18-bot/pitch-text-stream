@@ -70,12 +70,12 @@ const Index = () => {
 
   // Convert EventData to SoccerEvent format for display
   const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
-    let protocolType: SoccerEvent['protocolType'] = 'Player – Event';
+    let protocolType: SoccerEvent['protocolType'] = 'Player — Event';
     
     if (eventData.target_player) {
-      protocolType = 'Player A – Event – Player B';
+      protocolType = 'Player A — Event — Player B';
     } else if (eventData.team && !eventData.player_name) {
-      protocolType = 'Team – Event';
+      protocolType = 'Team — Event';
     }
 
     return {
@@ -87,6 +87,7 @@ const Index = () => {
       referee: '',
       text: eventData.transcription,
       timestamp: Date.now(),
+      confidence: 0.8,
     };
   };
 
