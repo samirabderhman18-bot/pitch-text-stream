@@ -63,6 +63,36 @@ async function transcribeWithHuggingFace(audioData: string): Promise<string> {
   return result.text || '';
 }
 
+// Process base64 in chunks to prevent memory issues and maintain audio integrity
+function processBase64Chunks(base64String: string, chunkSize = 32768): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  let position = 0;
+  
+  while (position < base64String.length) {
+    const chunk = base64String.slice(position, position + chunkSize);
+    const binaryChunk = atob(chunk);
+    const bytes = new Uint8Array(binaryChunk.length);
+    
+    for (let i = 0; i < binaryChunk.length; i++) {
+      bytes[i] = binaryChunk.charCodeAt(i);
+    }
+    
+    chunks.push(bytes);
+    position += chunkSize;
+  }
+
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
 // AssemblyAI transcription with polling
 async function transcribeWithAssemblyAI(
   audioData: string, 
@@ -74,15 +104,25 @@ async function transcribeWithAssemblyAI(
 
   console.log('Uploading to AssemblyAI...');
   
+  // Process audio data in chunks for better memory handling
+  const audioBytes = processBase64Chunks(audioData);
+  
+  // Create a Blob with the correct MIME type for AssemblyAI
+  const audioBlob = new Blob([audioBytes.buffer as ArrayBuffer], { type: 'audio/webm; codecs=opus' });
+  
   // Upload audio
   const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
     method: 'POST',
     headers: {
       'authorization': apiKey,
-      'content-type': 'application/octet-stream',
     },
-    body: Uint8Array.from(atob(audioData), c => c.charCodeAt(0)),
+    body: audioBlob,
   });
+
+  if (!uploadResponse.ok) {
+    const errorText = await uploadResponse.text();
+    throw new Error(`Upload failed: ${errorText}`);
+  }
 
   const { upload_url } = await uploadResponse.json();
   console.log('Audio uploaded, creating transcript...');
@@ -102,6 +142,11 @@ async function transcribeWithAssemblyAI(
   });
 
   const transcript = await transcriptResponse.json();
+  
+  if (transcript.error) {
+    throw new Error(`AssemblyAI transcription failed: ${transcript.error}`);
+  }
+  
   const transcriptId = transcript.id;
   console.log('Transcript created:', transcriptId);
 
