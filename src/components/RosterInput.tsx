@@ -1,29 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Search, Users, Upload, Loader2 } from 'lucide-react';
+import { Users, Upload, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-interface Team {
+interface Club {
   id: number;
   name: string;
-  logo: string;
-  country: string;
+  playerCount: number;
 }
 
 interface RosterInputProps {
@@ -32,22 +24,22 @@ interface RosterInputProps {
 }
 
 const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [isLoadingClubs, setIsLoadingClubs] = useState(false);
   const [isUploadingJson, setIsUploadingJson] = useState(false);
-  const [open, setOpen] = useState(false);
-  const [selectedTeamName, setSelectedTeamName] = useState('');
+  const [selectedClubName, setSelectedClubName] = useState('');
   const [playerCount, setPlayerCount] = useState(0);
   const { toast } = useToast();
 
-  const searchTeams = async () => {
-    if (!searchQuery.trim()) return;
-    
-    setIsSearching(true);
+  // Load clubs from database on component mount
+  useEffect(() => {
+    loadClubs();
+  }, []);
+
+  const loadClubs = async () => {
+    setIsLoadingClubs(true);
     try {
-      // Search teams in the database by club_id or name
-      // First, let's get unique club_ids from players table
+      // Get all players with club_id
       const { data: playerData, error: playerError } = await supabase
         .from('players')
         .select('club_id')
@@ -55,100 +47,73 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
 
       if (playerError) throw playerError;
 
-      // Get unique club_ids
-      const uniqueClubIds = [...new Set(playerData?.map(p => p.club_id) || [])];
+      // Count players per club
+      const clubCounts = new Map<number, number>();
+      playerData?.forEach(player => {
+        const count = clubCounts.get(player.club_id) || 0;
+        clubCounts.set(player.club_id, count + 1);
+      });
+
+      // Get unique club IDs
+      const uniqueClubIds = Array.from(clubCounts.keys());
 
       if (uniqueClubIds.length === 0) {
-        toast({
-          title: "No teams found",
-          description: "No teams in the database yet. Upload players first.",
-          variant: "destructive",
-        });
-        setIsSearching(false);
+        setClubs([]);
+        setIsLoadingClubs(false);
         return;
       }
 
-      // Now search for these teams in the API
+      // Fetch club details from API
       const { data: apiData, error: apiError } = await supabase.functions.invoke('fetch-team-roster', {
-        body: { action: 'search-teams', query: searchQuery },
+        body: { action: 'search-teams', query: '' }, // Empty query to get all
       });
 
       if (apiError) throw apiError;
 
       if (apiData.response && apiData.response.length > 0) {
-        // Filter teams that exist in our database (have players with matching club_id)
-        const teamsWithPlayers = apiData.response.filter((item: any) => 
-          uniqueClubIds.includes(item.team.id)
-        );
-
-        if (teamsWithPlayers.length > 0) {
-          setTeams(teamsWithPlayers.map((item: any) => ({
+        // Filter and map clubs that exist in our database
+        const clubsList = apiData.response
+          .filter((item: any) => uniqueClubIds.includes(item.team.id))
+          .map((item: any) => ({
             id: item.team.id,
             name: item.team.name,
-            logo: item.team.logo,
-            country: item.team.country,
-          })));
-          setOpen(true);
-        } else {
-          toast({
-            title: "No teams found",
-            description: "No teams with players in the database match your search",
-            variant: "destructive",
-          });
-        }
-      } else {
-        toast({
-          title: "No teams found",
-          description: "Try a different search term",
-          variant: "destructive",
-        });
+            playerCount: clubCounts.get(item.team.id) || 0,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        setClubs(clubsList);
       }
     } catch (error) {
-      console.error('Error searching teams:', error);
+      console.error('Error loading clubs:', error);
       toast({
         title: "Error",
-        description: "Failed to search teams. Please try again.",
+        description: "Failed to load clubs. Please try again.",
         variant: "destructive",
       });
     } finally {
-      setIsSearching(false);
+      setIsLoadingClubs(false);
     }
   };
 
-  const selectTeam = async (teamId: number, teamName: string) => {
-    try {
-      // Get player count for this team
-      const { data, error } = await supabase
-        .from('players')
-        .select('id', { count: 'exact' })
-        .eq('club_id', teamId);
-
-      if (error) throw error;
-
-      const count = data?.length || 0;
-      
-      onClubSelected(teamId);
-      setSelectedTeamName(teamName);
-      setPlayerCount(count);
-      setOpen(false);
+  const handleClubSelect = (clubIdString: string) => {
+    const clubId = parseInt(clubIdString);
+    const club = clubs.find(c => c.id === clubId);
+    
+    if (club) {
+      onClubSelected(clubId);
+      setSelectedClubName(club.name);
+      setPlayerCount(club.playerCount);
       
       toast({
-        title: "Team selected",
-        description: `${teamName} - ${count} players available`,
-      });
-    } catch (error) {
-      console.error('Error selecting team:', error);
-      toast({
-        title: "Error",
-        description: "Failed to select team. Please try again.",
-        variant: "destructive",
+        title: "Club selected",
+        description: `${club.name} - ${club.playerCount} players available`,
       });
     }
   };
 
   const clearSelection = () => {
     onClubSelected(null);
-    setSelectedTeamName('');
+    setSelectedClubName('');
     setPlayerCount(0);
   };
 
@@ -175,6 +140,9 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         title: 'Success',
         description: `Inserted ${data.playersInserted} players, updated ${data.playersUpdated} players`,
       });
+
+      // Reload clubs after upload
+      await loadClubs();
     } catch (error) {
       console.error('JSON upload error:', error);
       toast({
@@ -221,51 +189,34 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
         />
       </div>
       
-      <div className="flex gap-2">
-        <Input
-          placeholder="Search for a team..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && searchTeams()}
-          className="flex-1"
-        />
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button 
-              onClick={searchTeams} 
-              disabled={isSearching || !searchQuery.trim()}
-              className="gap-2"
-            >
-              <Search className="w-4 h-4" />
-              {isSearching ? 'Searching...' : 'Search'}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-[400px] p-0" align="end">
-            <Command>
-              <CommandInput placeholder="Filter teams..." />
-              <CommandList>
-                <CommandEmpty>No teams found.</CommandEmpty>
-                <CommandGroup heading="Select a team">
-                  {teams.map((team) => (
-                    <CommandItem
-                      key={team.id}
-                      onSelect={() => selectTeam(team.id, team.name)}
-                      className="cursor-pointer"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        <img src={team.logo} alt={team.name} className="w-8 h-8 object-contain" />
-                        <div className="flex-1">
-                          <div className="font-medium">{team.name}</div>
-                          <div className="text-xs text-muted-foreground">{team.country}</div>
-                        </div>
-                      </div>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+      <div className="space-y-2">
+        <Select 
+          onValueChange={handleClubSelect} 
+          value={selectedClubId?.toString() || undefined}
+          disabled={isLoadingClubs || clubs.length === 0}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder={
+              isLoadingClubs 
+                ? "Loading clubs..." 
+                : clubs.length === 0 
+                  ? "No clubs available (upload JSON first)" 
+                  : "Select a club"
+            } />
+          </SelectTrigger>
+          <SelectContent>
+            {clubs.map((club) => (
+              <SelectItem key={club.id} value={club.id.toString()}>
+                <div className="flex items-center justify-between w-full">
+                  <span>{club.name}</span>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    ({club.playerCount} players)
+                  </span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       
       {selectedClubId && (
@@ -274,7 +225,7 @@ const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
             <div className="flex items-center gap-2">
               <Badge variant="secondary" className="gap-2">
                 <Users className="w-3 h-3" />
-                {selectedTeamName} - {playerCount} players
+                {selectedClubName} - {playerCount} players
               </Badge>
             </div>
             <Button 
