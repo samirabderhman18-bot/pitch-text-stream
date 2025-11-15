@@ -255,7 +255,7 @@ async function processTranscription(req: TranscriptionRequest): Promise<Transcri
   // Step 2: Enhance with Gemini (optional but recommended)
   const enhancedText = await enhanceWithGemini(
     transcriptionText,
-    req.roster,
+    req.roster || [],
     languageCode
   );
 
