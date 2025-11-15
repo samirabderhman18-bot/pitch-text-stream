@@ -21,20 +21,20 @@ import {
 interface Club {
   id: number;
   name: string;
-  logo_url: string; // Assuming 'logo_url' is the column name in your DB
+  logo_url: string;
 }
 
-// Props for the component, allowing it to manage a roster state in a parent component.
+// Props for the component - now accepts selectedClubId instead of roster
 interface RosterInputProps {
-  roster: string[]; // Expects an array of player IDs.
-  onRosterChange: (roster: string[]) => void;
+  selectedClubId: number | null;
+  onClubSelected: (clubId: number | null) => void;
 }
 
-const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
-  // State for the club list and selection
+const RosterInput = ({ selectedClubId, onClubSelected }: RosterInputProps) => {
+  // State for the club list
   const [clubs, setClubs] = useState<Club[]>([]);
-  const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
   const [isClubsLoading, setIsClubsLoading] = useState(true);
+  const [playerCount, setPlayerCount] = useState<number>(0);
   
   // State for component interactions
   const [isLoadingPlayers, setIsLoadingPlayers] = useState(false);
@@ -48,7 +48,7 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
       setIsClubsLoading(true);
       try {
         const { data, error } = await supabase
-          .from('teams') // Make sure this matches your table name for clubs/teams
+          .from('teams')
           .select('id, name, logo_url')
           .order('name', { ascending: true });
 
@@ -68,57 +68,60 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
     };
 
     fetchAllClubs();
-  }, [toast]); // Added toast to dependency array as it's used inside the effect
+  }, [toast]);
 
-  /**
-   * Loads players for a specific team and updates the roster.
-   * @param teamId The ID of the team to load players for.
-   */
-  const loadTeamPlayers = async (teamId: number) => {
-    setIsLoadingPlayers(true);
-    try {
-      const { data, error } = await supabase
-        .from('players')
-        .select('id')
-        .eq('team_id', teamId);
+  // Effect to load player count when club is selected
+  useEffect(() => {
+    const loadPlayerCount = async () => {
+      if (!selectedClubId) {
+        setPlayerCount(0);
+        return;
+      }
 
-      if (error) throw error;
+      setIsLoadingPlayers(true);
+      try {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id', { count: 'exact', head: true })
+          .eq('team_id', selectedClubId);
 
-      if (data && data.length > 0) {
-        const playerIds = data.map((player) => player.id.toString());
-        onRosterChange(playerIds);
+        if (error) throw error;
+
+        const count = data?.length || 0;
+        setPlayerCount(count);
+        
+        if (count === 0) {
+          toast({
+            title: "No players found",
+            description: "This club has no players associated with it in the database.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error('Error loading player count:', error);
         toast({
-          title: "Roster Loaded",
-          description: `Loaded ${playerIds.length} players.`,
-        });
-      } else {
-        onRosterChange([]); // Clear roster if no players are found
-        toast({
-          title: "No players found",
-          description: "This club has no players associated with it in the database.",
+          title: "Error",
+          description: "Failed to load player count. Please try again.",
           variant: "destructive",
         });
+      } finally {
+        setIsLoadingPlayers(false);
       }
-    } catch (error) {
-      console.error('Error loading players:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load the team roster. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingPlayers(false);
-    }
-  };
+    };
+
+    loadPlayerCount();
+  }, [selectedClubId, toast]);
 
   /**
    * Handles the selection of a club from the dropdown.
-   * @param club The selected club object.
    */
   const handleClubSelect = (club: Club) => {
-    setSelectedClubId(club.id);
-    loadTeamPlayers(club.id);
+    onClubSelected(club.id);
     setIsPopoverOpen(false);
+    toast({
+      title: "Club Selected",
+      description: `Selected ${club.name}. Loading player roster...`,
+    });
   };
   
   /**
@@ -148,6 +151,16 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         description: `Successfully processed ${data.count} players. You can now select a club to load their roster.`,
       });
       
+      // Refresh clubs list after upload
+      const { data: clubsData, error: clubsError } = await supabase
+        .from('teams')
+        .select('id, name, logo_url')
+        .order('name', { ascending: true });
+
+      if (!clubsError && clubsData) {
+        setClubs(clubsData);
+      }
+      
     } catch (error) {
       console.error('JSON upload error:', error);
       toast({
@@ -162,11 +175,11 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
   };
   
   /**
-   * Clears the current roster and resets the club selection.
+   * Clears the current club selection.
    */
-  const clearRoster = () => {
-    onRosterChange([]);
-    setSelectedClubId(null);
+  const clearSelection = () => {
+    onClubSelected(null);
+    setPlayerCount(0);
   };
 
   const selectedClubName = clubs.find(c => c.id === selectedClubId)?.name || "Select a club...";
@@ -247,22 +260,31 @@ const RosterInput = ({ roster, onRosterChange }: RosterInputProps) => {
         </PopoverContent>
       </Popover>
       
-      {/* Roster Information Display */}
-      {roster.length > 0 && (
+      {/* Club & Player Information Display */}
+      {selectedClubId && (
         <div className="p-3 border rounded-md bg-muted/50">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Users className="w-4 h-4" />
-              <span>{roster.length} Players in Roster</span>
+              <span>
+                {isLoadingPlayers ? (
+                  <>
+                    <Loader2 className="inline w-3 h-3 animate-spin mr-1" />
+                    Loading players...
+                  </>
+                ) : (
+                  `${playerCount} Player${playerCount !== 1 ? 's' : ''} in Roster`
+                )}
+              </span>
             </div>
             <Button 
               variant="ghost" 
               size="sm" 
-              onClick={clearRoster}
+              onClick={clearSelection}
               className="h-7 text-xs px-2"
             >
               <X className="mr-1 h-3 w-3" />
-              Clear Roster
+              Clear Selection
             </Button>
           </div>
         </div>
