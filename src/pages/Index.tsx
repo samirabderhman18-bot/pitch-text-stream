@@ -4,6 +4,7 @@ import TranscriptionDisplay from '@/components/TranscriptionDisplay';
 import EventTimeline from '@/components/EventTimeline';
 import EventLog from '@/components/EventLog';
 import RosterInput from '@/components/RosterInput';
+import PlayerManagementTable from '@/components/PlayerManagementTable';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { SoccerEvent } from '@/types/soccer-events';
@@ -285,10 +286,21 @@ const Index = () => {
                 <Switch checked={saveToDatabase} onCheckedChange={setSaveToDatabase} disabled={!matchId} />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Player Database</Label>
-              <p className="text-sm text-muted-foreground mb-2">Upload JSON file with player data including jersey numbers</p>
-              <RosterInput />
+            <div className="space-y-4">
+              <div>
+                <Label>Player Database</Label>
+                <p className="text-sm text-muted-foreground mb-2">Upload JSON file with player data (numbers auto-assigned if missing)</p>
+                <RosterInput />
+              </div>
+              
+              <div>
+                <Label>Manage Player Numbers</Label>
+                <p className="text-sm text-muted-foreground mb-2">Edit jersey numbers for accurate player detection</p>
+                <PlayerManagementTable 
+                  players={players} 
+                  onPlayersUpdate={fetchAllPlayers}
+                />
+              </div>
             </div>
           </div>
 
