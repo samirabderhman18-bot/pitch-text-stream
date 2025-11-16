@@ -8,15 +8,13 @@ import { supabase } from '@/integrations/supabase/client';
  */
 interface Player {
   id: number;
-  name: string;
-  club_id: number;
-  position: string | null;
-  overall_rating: number | null;
-  age: number | null;
-  nationality: string | null;
+  forename: string;
+  surname: string;
+  full_name: string | null;
+  number: number | null;
   image_url: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 /**
@@ -44,12 +42,11 @@ export const usePlayers = () => {
     setError(null);
 
     try {
-      // Fetch all players where the 'club_id' column matches the provided clubId.
+      // Fetch all players from the database
       const { data, error } = await supabase
         .from('players')
         .select('*')
-        .eq('club_id', clubId)
-        .order('name', { ascending: true });
+        .order('number', { ascending: true });
 
       if (error) throw error;
       
@@ -74,7 +71,7 @@ export const usePlayers = () => {
       const { data, error } = await supabase
         .from('players')
         .select('*')
-        .order('name', { ascending: true });
+        .order('number', { ascending: true });
 
       if (error) throw error;
 
@@ -95,7 +92,10 @@ export const usePlayers = () => {
     if (!query) return players;
     const lowerQuery = query.toLowerCase();
     return players.filter(player =>
-      player.name.toLowerCase().includes(lowerQuery)
+      player.full_name?.toLowerCase().includes(lowerQuery) ||
+      player.forename.toLowerCase().includes(lowerQuery) ||
+      player.surname.toLowerCase().includes(lowerQuery) ||
+      player.number?.toString().includes(query)
     );
   };
 

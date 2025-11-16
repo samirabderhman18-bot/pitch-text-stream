@@ -69,16 +69,14 @@ const Index = () => {
   const [saveToDatabase, setSaveToDatabase] = useState(false);
 
   // --- UPDATED STATE & HOOKS ---
-  // Replaced `roster` state with `selectedClubId`
-  const [selectedClubId, setSelectedClubId] = useState<number | null>(null);
   const { toast } = useToast();
   // Use our updated hook. It provides the player list and the function to fetch them.
-  const { players, fetchPlayersByClubId } = usePlayers();
+  const { players, fetchAllPlayers } = usePlayers();
 
-  // This effect automatically fetches players whenever a new club is selected.
+  // Fetch all players on mount
   useEffect(() => {
-    fetchPlayersByClubId(selectedClubId);
-  }, [selectedClubId, fetchPlayersByClubId]);
+    fetchAllPlayers();
+  }, [fetchAllPlayers]);
 
   const addLog = (message: string, type: LogEntry['type'] = 'info') => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
@@ -125,12 +123,11 @@ const Index = () => {
       const audioDuration = 3000;
       addLog(`Sending to ${transcriptionService.toUpperCase()} transcription...`, 'processing');
 
-      // Call the backend function, now passing 'clubId' instead of 'roster'
+      // Call the backend function, now passing player data instead of clubId
       const { data, error } = await supabase.functions.invoke('transcribe-coordinator', {
         body: {
           audioData: base64Audio,
           languageCode: language,
-          clubId: selectedClubId, // <-- UPDATED
           audioDuration: audioDuration,
           needsSpeakerLabels: needsSpeakerLabels,
           extractEvents: extractEvents,
@@ -289,13 +286,9 @@ const Index = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Team Roster (optional)</Label>
-              <p className="text-sm text-muted-foreground mb-2">Select a club to provide its player roster, improving transcription accuracy.</p>
-              {/* --- UPDATED RosterInput PROPS --- */}
-              <RosterInput 
-                selectedClubId={selectedClubId} 
-                onClubSelected={setSelectedClubId} 
-              />
+              <Label>Player Database</Label>
+              <p className="text-sm text-muted-foreground mb-2">Upload JSON file with player data including jersey numbers</p>
+              <RosterInput />
             </div>
           </div>
 
