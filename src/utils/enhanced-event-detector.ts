@@ -1,34 +1,43 @@
 import { SoccerEvent, SoccerEventType, EVENT_KEYWORDS, EVENT_KEYWORDS_AR, RecognitionProtocol } from '@/types/soccer-events';
 
 interface Player {
-  full_name: string;
+  full_name: string | null;
   forename: string;
   surname: string;
+  number: number | null;
 }
 
-// Enhanced entity extraction that uses the player database
+// Enhanced entity extraction that uses player numbers from the database
 const extractEntitiesWithDatabase = (text: string, players: Player[]): string[] => {
   const foundPlayers: string[] = [];
   
-  // First, check for exact matches in the database
-  players.forEach(player => {
-    const fullNameLower = player.full_name.toLowerCase();
-    const forenameLower = player.forename.toLowerCase();
-    const surnameLower = player.surname.toLowerCase();
-    const textLower = text.toLowerCase();
-    
-    if (textLower.includes(fullNameLower)) {
-      foundPlayers.push(player.full_name);
-    } else if (textLower.includes(forenameLower) || textLower.includes(surnameLower)) {
-      foundPlayers.push(player.full_name);
-    }
-  });
+  // Extract numbers from text (look for jersey numbers)
+  const numberMatches = text.match(/\b(\d{1,2})\b/g);
   
-  // Fallback to regex for capitalized words if no database matches
+  if (numberMatches) {
+    numberMatches.forEach(numStr => {
+      const number = parseInt(numStr);
+      const player = players.find(p => p.number === number);
+      if (player && player.full_name) {
+        foundPlayers.push(`#${number} ${player.full_name}`);
+      }
+    });
+  }
+  
+  // Fallback to name matching if no numbers found
   if (foundPlayers.length === 0) {
-    const ENTITY_REGEX = /\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\b/g;
-    const matches = text.match(ENTITY_REGEX);
-    return matches ? [...new Set(matches)] : [];
+    players.forEach(player => {
+      const textLower = text.toLowerCase();
+      const fullNameLower = player.full_name?.toLowerCase();
+      const forenameLower = player.forename.toLowerCase();
+      const surnameLower = player.surname.toLowerCase();
+      
+      if (fullNameLower && textLower.includes(fullNameLower)) {
+        foundPlayers.push(player.full_name);
+      } else if (textLower.includes(forenameLower) || textLower.includes(surnameLower)) {
+        foundPlayers.push(player.full_name || `${player.forename} ${player.surname}`);
+      }
+    });
   }
   
   return [...new Set(foundPlayers)];
@@ -97,17 +106,32 @@ const detectEventsArWithDatabase = (text: string, players: Player[]): SoccerEven
   const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
 
   sentences.forEach((sentence) => {
-    // Try to find player names in Arabic text
+    // Try to find player numbers in Arabic text
     const foundPlayers: string[] = [];
-    players.forEach(player => {
-      const textLower = sentence.toLowerCase();
-      const forenameLower = player.forename.toLowerCase();
-      const surnameLower = player.surname.toLowerCase();
-      
-      if (textLower.includes(forenameLower) || textLower.includes(surnameLower)) {
-        foundPlayers.push(player.full_name);
-      }
-    });
+    const numberMatches = sentence.match(/\b(\d{1,2})\b/g);
+    
+    if (numberMatches) {
+      numberMatches.forEach(numStr => {
+        const number = parseInt(numStr);
+        const player = players.find(p => p.number === number);
+        if (player && player.full_name) {
+          foundPlayers.push(`#${number} ${player.full_name}`);
+        }
+      });
+    }
+    
+    // Fallback to name matching
+    if (foundPlayers.length === 0) {
+      players.forEach(player => {
+        const textLower = sentence.toLowerCase();
+        const forenameLower = player.forename.toLowerCase();
+        const surnameLower = player.surname.toLowerCase();
+        
+        if (textLower.includes(forenameLower) || textLower.includes(surnameLower)) {
+          foundPlayers.push(player.full_name || `${player.forename} ${player.surname}`);
+        }
+      });
+    }
 
     (Object.keys(EVENT_KEYWORDS_AR) as SoccerEventType[]).forEach((eventType) => {
       const keywords = EVENT_KEYWORDS_AR[eventType];

@@ -11,11 +11,11 @@ const NavLink = forwardRef<HTMLAnchorElement, NavLinkCompatProps>(
       <RouterNavLink
         ref={ref}
         {...props}
-        className={({ isActive, isPending }) =>
+        className={({ isActive, isPending, isTransitioning }) =>
           cn(
             // If the passed className is a function, call it with the state
             typeof className === "function"
-              ? className({ isActive, isPending })
+              ? className({ isActive, isPending, isTransitioning })
               // Otherwise, just use the string value
               : className,
             // You can still add your own logic here if you want to enforce
