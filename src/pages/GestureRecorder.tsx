@@ -13,16 +13,13 @@ import EventTimeline from '@/components/EventTimeline';
 const CONFIG = {
   FPS: 15,
   COOLDOWN_MS: 700,
-  HOLD_PASS_FRAMES: 3,
-  HOLD_SHOT_FRAMES: 3,
-  HOLD_TACKLE_FRAMES: 4,
-  HOLD_VOICE_FRAMES: 6,
-  HOLD_FOUL_FRAMES: 3,
-  HOLD_CORNER_FRAMES: 4,
-  HOLD_OFFSIDE_FRAMES: 4,
-  HOLD_SUB_FRAMES: 5,
-  LEARNING_DURATION_MS: 2000,  // 2 seconds to learn jitter
-  JITTER_MARGIN: 1.5,           // multiplier for jitter zone
+  LEARNING_DURATION_MS: 2000,
+  JITTER_MARGIN: 1.5,
+  HISTORY_SIZE: 30, // ~2 seconds of data at 15 FPS
+  VELOCITY_THRESHOLD_SHARP: 250, // deg/s for sharp flicks
+  VELOCITY_THRESHOLD_GENTLE: 50, // deg/s for gentle tilts
+  STABILITY_THRESHOLD: 15, // deg/s for holding steady
+  HOLD_DURATION_FRAMES: 5, // frames needed to confirm a hold gesture
 } as const;
 
 /* ==========================  TYPES  ========================== */
@@ -32,12 +29,17 @@ interface Kalman3D {
   z: Kalman1D;
 }
 interface Vec3 { x: number; y: number; z: number }
-interface GestureSample extends Vec3 {
-  alpha: number | null;
-  beta: number | null;
-  gamma: number | null;
+
+// New Type: Represents a single snapshot of device orientation and motion
+interface MotionSample {
   ts: number;
+  beta: number;
+  gamma: number;
+  alpha: number | null;
+  betaVelocity: number;
+  gammaVelocity: number;
 }
+
 interface JitterZone {
   centerBeta: number;
   centerGamma: number;
@@ -61,29 +63,97 @@ class Kalman1D {
   }
 }
 
-/* ==========================  GESTURE DECISION  ========================== */
-type Rule = (s: GestureSample, base: GestureSample) => boolean;
-const RULES: Record<string, Rule> = {
-  PASS: (s, b) => s.beta > b.beta + 40 && s.beta < b.beta + 85 && Math.abs(s.gamma - b.gamma) < 25,
-  SHOT: (s, b) => s.beta < b.beta - 25 && Math.abs(s.gamma - b.gamma) < 25,
-  TACKLE: (s, b) => Math.abs(s.gamma - b.gamma) > 40 && Math.abs(s.beta - b.beta) < 25,
-  VOICE_TAG: (s, b) => s.beta < -110 || s.beta > 110,
-  FOUL: (s, b) => Math.abs(s.gamma - b.gamma) > 55 && Math.abs(s.beta - b.beta) > 25,
-  CORNER: (s, b) => s.gamma > b.gamma + 15 && s.gamma < b.gamma + 40 && Math.abs(s.beta - b.beta) < 12,
-  OFFSIDE: (s, b) => s.gamma < b.gamma - 15 && s.gamma > b.gamma - 40 && Math.abs(s.beta - b.beta) < 12,
-  SUBSTITUTION: (s, b) => Math.abs(s.beta - b.beta) < 10 && Math.abs(s.gamma - b.gamma) < 10,
-};
+/* ==========================  MOVEMENT PATTERN ENGINE  ========================== */
+// Analyzes a history of motion to detect a gesture.
+type MovementPatternMatcher = (history: MotionSample[]) => boolean;
 
-const FRAMES_NEEDED: Record<string, number> = {
-  PASS: CONFIG.HOLD_PASS_FRAMES,
-  SHOT: CONFIG.HOLD_SHOT_FRAMES,
-  TACKLE: CONFIG.HOLD_TACKLE_FRAMES,
-  VOICE_TAG: CONFIG.HOLD_VOICE_FRAMES,
-  FOUL: CONFIG.HOLD_FOUL_FRAMES,
-  CORNER: CONFIG.HOLD_CORNER_FRAMES,
-  OFFSIDE: CONFIG.HOLD_OFFSIDE_FRAMES,
-  SUBSTITUTION: CONFIG.HOLD_SUB_FRAMES,
-};
+// Defines each gesture by its name and a pattern matching function.
+const PATTERNS: { name: SoccerEventType; matcher: MovementPatternMatcher; duration: number }[] = [
+  {
+    name: 'PASS',
+    duration: 1,
+    matcher: (h) => {
+      const last = h[h.length - 1];
+      if (!last) return false;
+      // Sharp forward velocity peak (flick forward)
+      return last.betaVelocity > CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.gammaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
+    },
+  },
+  {
+    name: 'SHOT',
+    duration: 1,
+    matcher: (h) => {
+      const last = h[h.length - 1];
+      if (!last) return false;
+      // Sharp backward velocity peak (flick backward)
+      return last.betaVelocity < -CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.gammaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
+    },
+  },
+  {
+    name: 'TACKLE',
+    duration: 1,
+    matcher: (h) => {
+      const last = h[h.length - 1];
+      if (!last) return false;
+      // Sharp sideways velocity peak (tilt left/right)
+      return Math.abs(last.gammaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.betaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
+    },
+  },
+    {
+    name: 'FOUL', // A more violent, less precise shake
+    duration: 1,
+    matcher: (h) => {
+      const last = h[h.length - 1];
+      if (!last) return false;
+      // High velocity in both axes simultaneously
+      return Math.abs(last.gammaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP * 0.8 && Math.abs(last.betaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP * 0.8;
+    },
+  },
+  {
+    name: 'VOICE_TAG',
+    duration: CONFIG.HOLD_DURATION_FRAMES,
+    matcher: (h) => {
+        if (h.length < CONFIG.HOLD_DURATION_FRAMES) return false;
+        // Check if the last N frames are consistently upside-down
+        return h.slice(-CONFIG.HOLD_DURATION_FRAMES).every(s => Math.abs(s.beta) > 135);
+    },
+  },
+  {
+    name: 'SUBSTITUTION',
+    duration: CONFIG.HOLD_DURATION_FRAMES,
+    matcher: (h) => {
+      if (h.length < CONFIG.HOLD_DURATION_FRAMES) return false;
+       // Check if phone is held flat and steady for the last N frames
+      return h.slice(-CONFIG.HOLD_DURATION_FRAMES).every(s => 
+        Math.abs(s.beta) < 15 && 
+        Math.abs(s.gamma) < 15 &&
+        Math.abs(s.betaVelocity) < CONFIG.STABILITY_THRESHOLD &&
+        Math.abs(s.gammaVelocity) < CONFIG.STABILITY_THRESHOLD
+      );
+    },
+  },
+  {
+    name: 'CORNER',
+    duration: 2,
+    matcher: (h) => {
+        const last = h[h.length-1];
+        if (!last) return false;
+        // Gentle tilt right and hold
+        return last.gamma > 20 && last.gamma < 60 && Math.abs(last.beta) < 20 && Math.abs(last.gammaVelocity) < CONFIG.STABILITY_THRESHOLD;
+    }
+  },
+  {
+    name: 'OFFSIDE',
+    duration: 2,
+    matcher: (h) => {
+        const last = h[h.length-1];
+        if (!last) return false;
+        // Gentle tilt left and hold
+        return last.gamma < -20 && last.gamma > -60 && Math.abs(last.beta) < 20 && Math.abs(last.gammaVelocity) < CONFIG.STABILITY_THRESHOLD;
+    }
+  }
+];
+
 
 /* ==========================  COMPONENT  ========================== */
 const GestureRecorder = () => {
@@ -101,8 +171,8 @@ const GestureRecorder = () => {
 
   /* ----------  REFS  ---------- */
   const kalRef = useRef<Kalman3D>({ x: new Kalman1D(), y: new Kalman1D(), z: new Kalman1D() });
-  const baseRef = useRef<GestureSample | null>(null);
-  const cntRef = useRef<Record<string, number>>({});
+  const motionHistoryRef = useRef<MotionSample[]>([]);
+  const gestureCounterRef = useRef<Record<string, number>>({});
   const lastGestureRef = useRef<string | null>(null);
   const cooldownRef = useRef(0);
   const learningSamplesRef = useRef<{ beta: number; gamma: number }[]>([]);
@@ -124,7 +194,7 @@ const GestureRecorder = () => {
     toast({ title: `${type} recorded` });
   }, [toast]);
 
-  /* ----------  START LEARNING  ---------- */
+  /* ----------  LEARNING & JITTER ZONE LOGIC (UNCHANGED)  ---------- */
   const startLearning = useCallback(() => {
     setIsLearning(true);
     setLearningProgress(0);
@@ -134,47 +204,39 @@ const GestureRecorder = () => {
     toast({ title: '🎯 Learning your grip...', description: 'Hold phone naturally for 2 seconds' });
   }, [toast]);
 
-  /* ----------  FINISH LEARNING  ---------- */
   const finishLearning = useCallback(() => {
     const samples = learningSamplesRef.current;
     if (samples.length < 5) {
       setIsLearning(false);
       return;
     }
-
-    // Calculate center (mean)
     const sumBeta = samples.reduce((acc, s) => acc + s.beta, 0);
     const sumGamma = samples.reduce((acc, s) => acc + s.gamma, 0);
     const centerBeta = sumBeta / samples.length;
     const centerGamma = sumGamma / samples.length;
-
-    // Calculate radius (standard deviation * margin)
     const varBeta = samples.reduce((acc, s) => acc + Math.pow(s.beta - centerBeta, 2), 0) / samples.length;
     const varGamma = samples.reduce((acc, s) => acc + Math.pow(s.gamma - centerGamma, 2), 0) / samples.length;
     const radiusBeta = Math.sqrt(varBeta) * CONFIG.JITTER_MARGIN;
     const radiusGamma = Math.sqrt(varGamma) * CONFIG.JITTER_MARGIN;
-
     const zone: JitterZone = {
       centerBeta,
       centerGamma,
-      radiusBeta: Math.max(radiusBeta, 5), // minimum 5°
+      radiusBeta: Math.max(radiusBeta, 5),
       radiusGamma: Math.max(radiusGamma, 5),
     };
-
     setJitterZone(zone);
     setIsLearning(false);
     toast({ title: '✅ Jitter zone learned!', description: `±${zone.radiusBeta.toFixed(1)}° β, ±${zone.radiusGamma.toFixed(1)}° γ` });
   }, [toast]);
 
-  /* ----------  CHECK IF OUTSIDE JITTER ZONE  ---------- */
   const isOutsideJitterZone = useCallback((beta: number, gamma: number): boolean => {
-    if (!jitterZone) return true; // no zone learned yet, allow all
+    if (!jitterZone) return true;
     const deltaBeta = Math.abs(beta - jitterZone.centerBeta);
     const deltaGamma = Math.abs(gamma - jitterZone.centerGamma);
     return deltaBeta > jitterZone.radiusBeta || deltaGamma > jitterZone.radiusGamma;
   }, [jitterZone]);
 
-  /* ----------  SENSOR LOOP  ---------- */
+  /* ----------  NEW SENSOR LOOP with Pattern Matching  ---------- */
   useEffect(() => {
     if (!isActive || !permission) return;
 
@@ -187,86 +249,101 @@ const GestureRecorder = () => {
       const γ = e.gamma ?? 0;
       const α = e.alpha;
 
-      /* Update gyro display */
       setGyro({ x: β, y: γ, z: 0, alpha: α });
 
-      /* LEARNING PHASE */
       if (isLearning) {
         const elapsed = Date.now() - learningStartRef.current;
         const progress = Math.min(elapsed / CONFIG.LEARNING_DURATION_MS, 1);
         setLearningProgress(progress);
-
         learningSamplesRef.current.push({ beta: β, gamma: γ });
-
-        if (progress >= 1) {
-          finishLearning();
-        }
-        return; // don't detect gestures while learning
+        if (progress >= 1) finishLearning();
+        return;
       }
-
-      /* Check if outside jitter zone */
+      
       if (!isOutsideJitterZone(β, γ)) {
-        cntRef.current = {};
-        return; // inside jitter zone, ignore
+        gestureCounterRef.current = {}; // Reset counters if we are in jitter zone
+        return;
       }
 
-      /* Kalman smooth */
+      // Kalman smooth the raw data
       const k = kalRef.current;
-      const sample: GestureSample = {
-        x: k.x.update(β),
-        y: k.y.update(γ),
-        z: k.z.update(0),
-        beta: β,
-        gamma: γ,
-        alpha: α,
-        ts: Date.now(),
+      const smoothedBeta = k.x.update(β);
+      const smoothedGamma = k.y.update(γ);
+      
+      const now = Date.now();
+      const history = motionHistoryRef.current;
+      const previous = history.length > 0 ? history[history.length - 1] : null;
+      
+      let betaVelocity = 0;
+      let gammaVelocity = 0;
+      
+      if (previous) {
+          const dt = (now - previous.ts) / 1000; // time delta in seconds
+          if (dt > 0) {
+              betaVelocity = (smoothedBeta - previous.beta) / dt;
+              gammaVelocity = (smoothedGamma - previous.gamma) / dt;
+          }
+      }
+
+      const newSample: MotionSample = {
+          ts: now,
+          beta: smoothedBeta,
+          gamma: smoothedGamma,
+          alpha: α,
+          betaVelocity,
+          gammaVelocity,
       };
 
-      /* base angle */
-      if (!baseRef.current) baseRef.current = { ...sample };
-      const base = baseRef.current;
-
-      /* rule engine */
-      const now = Date.now();
-      if (now < cooldownRef.current) return;
-
-      let winner: string | null = null;
-      for (const [name, rule] of Object.entries(RULES)) {
-        if (rule(sample, base)) {
-          cntRef.current[name] = (cntRef.current[name] || 0) + 1;
-          if (cntRef.current[name] >= FRAMES_NEEDED[name]) {
-            winner = name;
-            break;
-          }
-        } else cntRef.current[name] = 0;
+      // Add to history and keep it at a fixed size
+      history.push(newSample);
+      if (history.length > CONFIG.HISTORY_SIZE) {
+          history.shift();
       }
+
+      if (now < cooldownRef.current) return;
+      
+      let winner: string | null = null;
+      for (const pattern of PATTERNS) {
+          if (pattern.matcher(history)) {
+              gestureCounterRef.current[pattern.name] = (gestureCounterRef.current[pattern.name] || 0) + 1;
+              if (gestureCounterRef.current[pattern.name] >= pattern.duration) {
+                  winner = pattern.name;
+                  break; 
+              }
+          } else {
+              gestureCounterRef.current[pattern.name] = 0;
+          }
+      }
+
       if (!winner || winner === lastGestureRef.current) return;
 
-      /* conflict lockout */
       cooldownRef.current = now + CONFIG.COOLDOWN_MS;
       lastGestureRef.current = winner;
+      gestureCounterRef.current = {}; // Reset all counters after a win
 
       setCurrentGesture(winner);
-      if (winner === 'VOICE_TAG') setVoice(true);
-      else {
+      if (winner === 'VOICE_TAG') {
+        setVoice(true);
+      } else {
         add(winner as SoccerEventType);
         setVoice(false);
       }
-      setTimeout(() => setCurrentGesture(null), 1000);
+      setTimeout(() => {
+          setCurrentGesture(null);
+          lastGestureRef.current = null; // Allow re-detection of same gesture
+      }, 1000);
     };
 
     window.addEventListener('deviceorientation', onOrient);
     return () => window.removeEventListener('deviceorientation', onOrient);
   }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, add]);
 
-  /* ----------  START LEARNING WHEN ACTIVATED  ---------- */
   useEffect(() => {
     if (isActive && permission) {
       startLearning();
     }
   }, [isActive, permission, startLearning]);
 
-  /* ----------  UI  ---------- */
   const toggle = () => {
     if (!permission) ask();
     else setIsActive((v) => !v);
@@ -301,7 +378,6 @@ const GestureRecorder = () => {
           </Card>
         )}
 
-        {/* LEARNING PHASE BANNER */}
         {isLearning && (
           <Card className="p-6 mb-6 border-blue-500 bg-blue-500/5">
             <div className="flex items-start gap-3">
@@ -323,7 +399,6 @@ const GestureRecorder = () => {
         )}
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {/* COMPACT PHONE ORIENTATION */}
           <Card className="p-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold">Live Orientation</h2>
@@ -352,7 +427,6 @@ const GestureRecorder = () => {
             </div>
           </Card>
 
-          {/* CONTROLS */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Controls</h2>
             <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-3">
@@ -388,7 +462,6 @@ const GestureRecorder = () => {
             )}
           </Card>
 
-          {/* GESTURE GUIDE */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Gesture Guide</h2>
             <div className="space-y-2">
@@ -417,7 +490,7 @@ const GestureRecorder = () => {
   );
 };
 
-/* ==========================  PHONE VISUALIZATION  ========================== */
+/* ==========================  UI SUB-COMPONENTS (UNCHANGED)  ========================== */
 const PhoneVisualization = ({ alpha, beta, gamma, compact }: { alpha: number | null; beta: number; gamma: number; compact?: boolean }) => {
   const size = compact ? 60 : 80;
   const height = compact ? 105 : 140;
