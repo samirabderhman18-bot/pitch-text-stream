@@ -13,13 +13,18 @@ import EventTimeline from '@/components/EventTimeline';
 const CONFIG = {
   FPS: 15,
   COOLDOWN_MS: 700,
-  LEARNING_DURATION_MS: 2000,
-  JITTER_MARGIN: 1.5,
-  HISTORY_SIZE: 30, // ~2 seconds of data at 15 FPS
-  VELOCITY_THRESHOLD_SHARP: 250, // deg/s for sharp flicks
-  VELOCITY_THRESHOLD_GENTLE: 50, // deg/s for gentle tilts
-  STABILITY_THRESHOLD: 15, // deg/s for holding steady
-  HOLD_DURATION_FRAMES: 5, // frames needed to confirm a hold gesture
+  HOLD_PASS_FRAMES: 3,
+  HOLD_SHOT_FRAMES: 3,
+  HOLD_TACKLE_FRAMES: 4,
+  HOLD_VOICE_FRAMES: 6,
+  HOLD_FOUL_FRAMES: 3,
+  HOLD_CORNER_FRAMES: 4,
+  HOLD_OFFSIDE_FRAMES: 4,
+  HOLD_SUB_FRAMES: 5,
+  LEARNING_DURATION_MS: 2000,  // 2 seconds to learn jitter
+  JITTER_MARGIN: 1.5,           // multiplier for jitter zone
+  PATTERN_WINDOW_MS: 2000,      // 2 seconds for pattern tracking
+  PATTERN_MIN_SAMPLES: 8,       // minimum samples for pattern
 } as const;
 
 /* ==========================  TYPES  ========================== */
@@ -29,22 +34,29 @@ interface Kalman3D {
   z: Kalman1D;
 }
 interface Vec3 { x: number; y: number; z: number }
-
-// New Type: Represents a single snapshot of device orientation and motion
-interface MotionSample {
-  ts: number;
-  beta: number;
-  gamma: number;
+interface GestureSample extends Vec3 {
   alpha: number | null;
-  betaVelocity: number;
-  gammaVelocity: number;
+  beta: number | null;
+  gamma: number | null;
+  ts: number;
 }
-
 interface JitterZone {
   centerBeta: number;
   centerGamma: number;
   radiusBeta: number;
   radiusGamma: number;
+}
+interface PatternPoint {
+  beta: number;
+  gamma: number;
+  ts: number;
+  velocity: number;
+}
+interface MovementPattern {
+  name: string;
+  detected: boolean;
+  confidence: number;
+  path: string; // SVG path for visualization
 }
 
 /* ==========================  KALMAN 1-D  ========================== */
@@ -63,97 +75,120 @@ class Kalman1D {
   }
 }
 
-/* ==========================  MOVEMENT PATTERN ENGINE  ========================== */
-// Analyzes a history of motion to detect a gesture.
-type MovementPatternMatcher = (history: MotionSample[]) => boolean;
+/* ==========================  GESTURE DECISION  ========================== */
+type Rule = (s: GestureSample, base: GestureSample) => boolean;
+const RULES: Record<string, Rule> = {
+  PASS: (s, b) => s.beta > b.beta + 40 && s.beta < b.beta + 85 && Math.abs(s.gamma - b.gamma) < 25,
+  SHOT: (s, b) => s.beta < b.beta - 25 && Math.abs(s.gamma - b.gamma) < 25,
+  TACKLE: (s, b) => Math.abs(s.gamma - b.gamma) > 40 && Math.abs(s.beta - b.beta) < 25,
+  VOICE_TAG: (s, b) => s.beta < -110 || s.beta > 110,
+  FOUL: (s, b) => Math.abs(s.gamma - b.gamma) > 55 && Math.abs(s.beta - b.beta) > 25,
+  CORNER: (s, b) => s.gamma > b.gamma + 15 && s.gamma < b.gamma + 40 && Math.abs(s.beta - b.beta) < 12,
+  OFFSIDE: (s, b) => s.gamma < b.gamma - 15 && s.gamma > b.gamma - 40 && Math.abs(s.beta - b.beta) < 12,
+  SUBSTITUTION: (s, b) => Math.abs(s.beta - b.beta) < 10 && Math.abs(s.gamma - b.gamma) < 10,
+};
 
-// Defines each gesture by its name and a pattern matching function.
-const PATTERNS: { name: SoccerEventType; matcher: MovementPatternMatcher; duration: number }[] = [
-  {
-    name: 'PASS',
-    duration: 1,
-    matcher: (h) => {
-      const last = h[h.length - 1];
-      if (!last) return false;
-      // Sharp forward velocity peak (flick forward)
-      return last.betaVelocity > CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.gammaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
-    },
-  },
-  {
-    name: 'SHOT',
-    duration: 1,
-    matcher: (h) => {
-      const last = h[h.length - 1];
-      if (!last) return false;
-      // Sharp backward velocity peak (flick backward)
-      return last.betaVelocity < -CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.gammaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
-    },
-  },
-  {
-    name: 'TACKLE',
-    duration: 1,
-    matcher: (h) => {
-      const last = h[h.length - 1];
-      if (!last) return false;
-      // Sharp sideways velocity peak (tilt left/right)
-      return Math.abs(last.gammaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP && Math.abs(last.betaVelocity) < CONFIG.VELOCITY_THRESHOLD_SHARP / 2;
-    },
-  },
-    {
-    name: 'FOUL', // A more violent, less precise shake
-    duration: 1,
-    matcher: (h) => {
-      const last = h[h.length - 1];
-      if (!last) return false;
-      // High velocity in both axes simultaneously
-      return Math.abs(last.gammaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP * 0.8 && Math.abs(last.betaVelocity) > CONFIG.VELOCITY_THRESHOLD_SHARP * 0.8;
-    },
-  },
-  {
-    name: 'VOICE_TAG',
-    duration: CONFIG.HOLD_DURATION_FRAMES,
-    matcher: (h) => {
-        if (h.length < CONFIG.HOLD_DURATION_FRAMES) return false;
-        // Check if the last N frames are consistently upside-down
-        return h.slice(-CONFIG.HOLD_DURATION_FRAMES).every(s => Math.abs(s.beta) > 135);
-    },
-  },
-  {
-    name: 'SUBSTITUTION',
-    duration: CONFIG.HOLD_DURATION_FRAMES,
-    matcher: (h) => {
-      if (h.length < CONFIG.HOLD_DURATION_FRAMES) return false;
-       // Check if phone is held flat and steady for the last N frames
-      return h.slice(-CONFIG.HOLD_DURATION_FRAMES).every(s => 
-        Math.abs(s.beta) < 15 && 
-        Math.abs(s.gamma) < 15 &&
-        Math.abs(s.betaVelocity) < CONFIG.STABILITY_THRESHOLD &&
-        Math.abs(s.gammaVelocity) < CONFIG.STABILITY_THRESHOLD
-      );
-    },
-  },
-  {
-    name: 'CORNER',
-    duration: 2,
-    matcher: (h) => {
-        const last = h[h.length-1];
-        if (!last) return false;
-        // Gentle tilt right and hold
-        return last.gamma > 20 && last.gamma < 60 && Math.abs(last.beta) < 20 && Math.abs(last.gammaVelocity) < CONFIG.STABILITY_THRESHOLD;
-    }
-  },
-  {
-    name: 'OFFSIDE',
-    duration: 2,
-    matcher: (h) => {
-        const last = h[h.length-1];
-        if (!last) return false;
-        // Gentle tilt left and hold
-        return last.gamma < -20 && last.gamma > -60 && Math.abs(last.beta) < 20 && Math.abs(last.gammaVelocity) < CONFIG.STABILITY_THRESHOLD;
+const FRAMES_NEEDED: Record<string, number> = {
+  PASS: CONFIG.HOLD_PASS_FRAMES,
+  SHOT: CONFIG.HOLD_SHOT_FRAMES,
+  TACKLE: CONFIG.HOLD_TACKLE_FRAMES,
+  VOICE_TAG: CONFIG.HOLD_VOICE_FRAMES,
+  FOUL: CONFIG.HOLD_FOUL_FRAMES,
+  CORNER: CONFIG.HOLD_CORNER_FRAMES,
+  OFFSIDE: CONFIG.HOLD_OFFSIDE_FRAMES,
+  SUBSTITUTION: CONFIG.HOLD_SUB_FRAMES,
+};
+
+/* ==========================  PATTERN DETECTION  ========================== */
+const detectCircularMotion = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+  if (points.length < 12) return { detected: false, confidence: 0 };
+  
+  // Calculate center
+  const centerBeta = points.reduce((sum, p) => sum + p.beta, 0) / points.length;
+  const centerGamma = points.reduce((sum, p) => sum + p.gamma, 0) / points.length;
+  
+  // Calculate distances from center
+  const distances = points.map(p => Math.sqrt(Math.pow(p.beta - centerBeta, 2) + Math.pow(p.gamma - centerGamma, 2)));
+  const avgDist = distances.reduce((sum, d) => sum + d, 0) / distances.length;
+  
+  // Check if distances are consistent (circular)
+  const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDist, 2), 0) / distances.length;
+  const consistency = 1 - Math.min(variance / (avgDist * avgDist), 1);
+  
+  // Check if we covered a significant arc
+  const angles = points.map(p => Math.atan2(p.gamma - centerGamma, p.beta - centerBeta));
+  let totalAngle = 0;
+  for (let i = 1; i < angles.length; i++) {
+    let diff = angles[i] - angles[i - 1];
+    if (diff > Math.PI) diff -= 2 * Math.PI;
+    if (diff < -Math.PI) diff += 2 * Math.PI;
+    totalAngle += Math.abs(diff);
+  }
+  
+  const coverage = totalAngle / (2 * Math.PI);
+  const detected = consistency > 0.6 && coverage > 0.5 && avgDist > 15;
+  
+  return { detected, confidence: detected ? Math.min(consistency * coverage, 0.95) : 0 };
+};
+
+const detectFigure8 = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+  if (points.length < 16) return { detected: false, confidence: 0 };
+  
+  // Split into two halves
+  const mid = Math.floor(points.length / 2);
+  const first = points.slice(0, mid);
+  const second = points.slice(mid);
+  
+  // Check if each half is roughly circular
+  const firstCircle = detectCircularMotion(first);
+  const secondCircle = detectCircularMotion(second);
+  
+  // Check if centers are offset
+  const center1Beta = first.reduce((sum, p) => sum + p.beta, 0) / first.length;
+  const center2Beta = second.reduce((sum, p) => sum + p.beta, 0) / second.length;
+  const offset = Math.abs(center1Beta - center2Beta);
+  
+  const detected = firstCircle.detected && secondCircle.detected && offset > 10;
+  const confidence = detected ? Math.min((firstCircle.confidence + secondCircle.confidence) / 2, 0.95) : 0;
+  
+  return { detected, confidence };
+};
+
+const detectZigzag = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+  if (points.length < 8) return { detected: false, confidence: 0 };
+  
+  // Find peaks and valleys
+  let peaks = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1].gamma;
+    const curr = points[i].gamma;
+    const next = points[i + 1].gamma;
+    
+    if ((curr > prev && curr > next) || (curr < prev && curr < next)) {
+      peaks++;
     }
   }
-];
+  
+  const detected = peaks >= 3;
+  const confidence = detected ? Math.min(peaks / 5, 0.95) : 0;
+  
+  return { detected, confidence };
+};
 
+const detectShake = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+  if (points.length < 6) return { detected: false, confidence: 0 };
+  
+  // Calculate velocity changes
+  let rapidChanges = 0;
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].velocity > 80) rapidChanges++;
+  }
+  
+  const detected = rapidChanges >= 4;
+  const confidence = detected ? Math.min(rapidChanges / 6, 0.95) : 0;
+  
+  return { detected, confidence };
+};
 
 /* ==========================  COMPONENT  ========================== */
 const GestureRecorder = () => {
@@ -168,11 +203,13 @@ const GestureRecorder = () => {
   const [isLearning, setIsLearning] = useState(false);
   const [learningProgress, setLearningProgress] = useState(0);
   const [jitterZone, setJitterZone] = useState<JitterZone | null>(null);
+  const [patternHistory, setPatternHistory] = useState<PatternPoint[]>([]);
+  const [detectedPattern, setDetectedPattern] = useState<MovementPattern | null>(null);
 
   /* ----------  REFS  ---------- */
   const kalRef = useRef<Kalman3D>({ x: new Kalman1D(), y: new Kalman1D(), z: new Kalman1D() });
-  const motionHistoryRef = useRef<MotionSample[]>([]);
-  const gestureCounterRef = useRef<Record<string, number>>({});
+  const baseRef = useRef<GestureSample | null>(null);
+  const cntRef = useRef<Record<string, number>>({});
   const lastGestureRef = useRef<string | null>(null);
   const cooldownRef = useRef(0);
   const learningSamplesRef = useRef<{ beta: number; gamma: number }[]>([]);
@@ -194,7 +231,7 @@ const GestureRecorder = () => {
     toast({ title: `${type} recorded` });
   }, [toast]);
 
-  /* ----------  LEARNING & JITTER ZONE LOGIC (UNCHANGED)  ---------- */
+  /* ----------  START LEARNING  ---------- */
   const startLearning = useCallback(() => {
     setIsLearning(true);
     setLearningProgress(0);
@@ -204,39 +241,47 @@ const GestureRecorder = () => {
     toast({ title: '🎯 Learning your grip...', description: 'Hold phone naturally for 2 seconds' });
   }, [toast]);
 
+  /* ----------  FINISH LEARNING  ---------- */
   const finishLearning = useCallback(() => {
     const samples = learningSamplesRef.current;
     if (samples.length < 5) {
       setIsLearning(false);
       return;
     }
+
+    // Calculate center (mean)
     const sumBeta = samples.reduce((acc, s) => acc + s.beta, 0);
     const sumGamma = samples.reduce((acc, s) => acc + s.gamma, 0);
     const centerBeta = sumBeta / samples.length;
     const centerGamma = sumGamma / samples.length;
+
+    // Calculate radius (standard deviation * margin)
     const varBeta = samples.reduce((acc, s) => acc + Math.pow(s.beta - centerBeta, 2), 0) / samples.length;
     const varGamma = samples.reduce((acc, s) => acc + Math.pow(s.gamma - centerGamma, 2), 0) / samples.length;
     const radiusBeta = Math.sqrt(varBeta) * CONFIG.JITTER_MARGIN;
     const radiusGamma = Math.sqrt(varGamma) * CONFIG.JITTER_MARGIN;
+
     const zone: JitterZone = {
       centerBeta,
       centerGamma,
-      radiusBeta: Math.max(radiusBeta, 5),
+      radiusBeta: Math.max(radiusBeta, 5), // minimum 5°
       radiusGamma: Math.max(radiusGamma, 5),
     };
+
     setJitterZone(zone);
     setIsLearning(false);
     toast({ title: '✅ Jitter zone learned!', description: `±${zone.radiusBeta.toFixed(1)}° β, ±${zone.radiusGamma.toFixed(1)}° γ` });
   }, [toast]);
 
+  /* ----------  CHECK IF OUTSIDE JITTER ZONE  ---------- */
   const isOutsideJitterZone = useCallback((beta: number, gamma: number): boolean => {
-    if (!jitterZone) return true;
+    if (!jitterZone) return true; // no zone learned yet, allow all
     const deltaBeta = Math.abs(beta - jitterZone.centerBeta);
     const deltaGamma = Math.abs(gamma - jitterZone.centerGamma);
     return deltaBeta > jitterZone.radiusBeta || deltaGamma > jitterZone.radiusGamma;
   }, [jitterZone]);
 
-  /* ----------  NEW SENSOR LOOP with Pattern Matching  ---------- */
+  /* ----------  SENSOR LOOP  ---------- */
   useEffect(() => {
     if (!isActive || !permission) return;
 
@@ -248,102 +293,145 @@ const GestureRecorder = () => {
       const β = e.beta ?? 0;
       const γ = e.gamma ?? 0;
       const α = e.alpha;
+      const now = Date.now();
 
+      /* Update gyro display */
       setGyro({ x: β, y: γ, z: 0, alpha: α });
 
+      /* LEARNING PHASE */
       if (isLearning) {
-        const elapsed = Date.now() - learningStartRef.current;
+        const elapsed = now - learningStartRef.current;
         const progress = Math.min(elapsed / CONFIG.LEARNING_DURATION_MS, 1);
         setLearningProgress(progress);
+
         learningSamplesRef.current.push({ beta: β, gamma: γ });
-        if (progress >= 1) finishLearning();
-        return;
-      }
-      
-      if (!isOutsideJitterZone(β, γ)) {
-        gestureCounterRef.current = {}; // Reset counters if we are in jitter zone
-        return;
+
+        if (progress >= 1) {
+          finishLearning();
+        }
+        return; // don't detect gestures while learning
       }
 
-      // Kalman smooth the raw data
+      /* Check if outside jitter zone */
+      const outsideJitter = isOutsideJitterZone(β, γ);
+      if (!outsideJitter) {
+        cntRef.current = {};
+        return; // inside jitter zone, ignore
+      }
+
+      /* Add to pattern history */
+      const prevPoint = patternHistory[patternHistory.length - 1];
+      const velocity = prevPoint 
+        ? Math.sqrt(Math.pow(β - prevPoint.beta, 2) + Math.pow(γ - prevPoint.gamma, 2)) / ((now - prevPoint.ts) / 1000)
+        : 0;
+      
+      const newPoint: PatternPoint = { beta: β, gamma: γ, ts: now, velocity };
+      const updatedHistory = [...patternHistory, newPoint].filter(p => now - p.ts < CONFIG.PATTERN_WINDOW_MS);
+      setPatternHistory(updatedHistory);
+
+      /* Check for movement patterns */
+      if (updatedHistory.length >= CONFIG.PATTERN_MIN_SAMPLES) {
+        const circular = detectCircularMotion(updatedHistory);
+        const figure8 = detectFigure8(updatedHistory);
+        const zigzag = detectZigzag(updatedHistory);
+        const shake = detectShake(updatedHistory);
+
+        // Find best pattern
+        const patterns = [
+          { name: 'CIRCULAR', ...circular },
+          { name: 'FIGURE_8', ...figure8 },
+          { name: 'ZIGZAG', ...zigzag },
+          { name: 'SHAKE', ...shake },
+        ];
+        
+        const best = patterns.reduce((max, p) => p.confidence > max.confidence ? p : max);
+        
+        if (best.detected && best.confidence > 0.7) {
+          // Generate SVG path for visualization
+          const minBeta = Math.min(...updatedHistory.map(p => p.beta));
+          const maxBeta = Math.max(...updatedHistory.map(p => p.beta));
+          const minGamma = Math.min(...updatedHistory.map(p => p.gamma));
+          const maxGamma = Math.max(...updatedHistory.map(p => p.gamma));
+          
+          const scaleBeta = (b: number) => ((b - minBeta) / (maxBeta - minBeta || 1)) * 80 + 10;
+          const scaleGamma = (g: number) => ((g - minGamma) / (maxGamma - minGamma || 1)) * 80 + 10;
+          
+          const pathData = updatedHistory.map((p, i) => 
+            `${i === 0 ? 'M' : 'L'} ${scaleBeta(p.beta)} ${scaleGamma(p.gamma)}`
+          ).join(' ');
+
+          setDetectedPattern({
+            name: best.name,
+            detected: true,
+            confidence: best.confidence,
+            path: pathData,
+          });
+
+          // Record as event
+          add(best.name as SoccerEventType);
+          
+          // Clear history after detection
+          setPatternHistory([]);
+          setTimeout(() => setDetectedPattern(null), 2000);
+        }
+      }
+
+      /* Kalman smooth */
       const k = kalRef.current;
-      const smoothedBeta = k.x.update(β);
-      const smoothedGamma = k.y.update(γ);
-      
-      const now = Date.now();
-      const history = motionHistoryRef.current;
-      const previous = history.length > 0 ? history[history.length - 1] : null;
-      
-      let betaVelocity = 0;
-      let gammaVelocity = 0;
-      
-      if (previous) {
-          const dt = (now - previous.ts) / 1000; // time delta in seconds
-          if (dt > 0) {
-              betaVelocity = (smoothedBeta - previous.beta) / dt;
-              gammaVelocity = (smoothedGamma - previous.gamma) / dt;
-          }
-      }
-
-      const newSample: MotionSample = {
-          ts: now,
-          beta: smoothedBeta,
-          gamma: smoothedGamma,
-          alpha: α,
-          betaVelocity,
-          gammaVelocity,
+      const sample: GestureSample = {
+        x: k.x.update(β),
+        y: k.y.update(γ),
+        z: k.z.update(0),
+        beta: β,
+        gamma: γ,
+        alpha: α,
+        ts: now,
       };
 
-      // Add to history and keep it at a fixed size
-      history.push(newSample);
-      if (history.length > CONFIG.HISTORY_SIZE) {
-          history.shift();
-      }
+      /* base angle */
+      if (!baseRef.current) baseRef.current = { ...sample };
+      const base = baseRef.current;
 
+      /* rule engine */
       if (now < cooldownRef.current) return;
-      
-      let winner: string | null = null;
-      for (const pattern of PATTERNS) {
-          if (pattern.matcher(history)) {
-              gestureCounterRef.current[pattern.name] = (gestureCounterRef.current[pattern.name] || 0) + 1;
-              if (gestureCounterRef.current[pattern.name] >= pattern.duration) {
-                  winner = pattern.name;
-                  break; 
-              }
-          } else {
-              gestureCounterRef.current[pattern.name] = 0;
-          }
-      }
 
+      let winner: string | null = null;
+      for (const [name, rule] of Object.entries(RULES)) {
+        if (rule(sample, base)) {
+          cntRef.current[name] = (cntRef.current[name] || 0) + 1;
+          if (cntRef.current[name] >= FRAMES_NEEDED[name]) {
+            winner = name;
+            break;
+          }
+        } else cntRef.current[name] = 0;
+      }
       if (!winner || winner === lastGestureRef.current) return;
 
+      /* conflict lockout */
       cooldownRef.current = now + CONFIG.COOLDOWN_MS;
       lastGestureRef.current = winner;
-      gestureCounterRef.current = {}; // Reset all counters after a win
 
       setCurrentGesture(winner);
-      if (winner === 'VOICE_TAG') {
-        setVoice(true);
-      } else {
+      if (winner === 'VOICE_TAG') setVoice(true);
+      else {
         add(winner as SoccerEventType);
         setVoice(false);
       }
-      setTimeout(() => {
-          setCurrentGesture(null);
-          lastGestureRef.current = null; // Allow re-detection of same gesture
-      }, 1000);
+      setTimeout(() => setCurrentGesture(null), 1000);
     };
 
     window.addEventListener('deviceorientation', onOrient);
     return () => window.removeEventListener('deviceorientation', onOrient);
-  }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, add]);
+  }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, add, patternHistory]);
 
+  /* ----------  START LEARNING WHEN ACTIVATED  ---------- */
   useEffect(() => {
     if (isActive && permission) {
       startLearning();
     }
   }, [isActive, permission, startLearning]);
 
+  /* ----------  UI  ---------- */
   const toggle = () => {
     if (!permission) ask();
     else setIsActive((v) => !v);
@@ -378,6 +466,7 @@ const GestureRecorder = () => {
           </Card>
         )}
 
+        {/* LEARNING PHASE BANNER */}
         {isLearning && (
           <Card className="p-6 mb-6 border-blue-500 bg-blue-500/5">
             <div className="flex items-start gap-3">
@@ -399,6 +488,7 @@ const GestureRecorder = () => {
         )}
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* COMPACT PHONE ORIENTATION */}
           <Card className="p-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold">Live Orientation</h2>
@@ -427,6 +517,7 @@ const GestureRecorder = () => {
             </div>
           </Card>
 
+          {/* CONTROLS */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Controls</h2>
             <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-3">
@@ -462,6 +553,7 @@ const GestureRecorder = () => {
             )}
           </Card>
 
+          {/* GESTURE GUIDE */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Gesture Guide</h2>
             <div className="space-y-2">
@@ -474,8 +566,53 @@ const GestureRecorder = () => {
               <GestureItem gesture="Gentle Tilt Left" event="OFFSIDE" />
               <GestureItem gesture="Flat & Steady" event="SUBSTITUTION" />
             </div>
+            <div className="mt-4 pt-4 border-t">
+              <h3 className="text-sm font-semibold mb-2 text-accent">Movement Patterns</h3>
+              <div className="space-y-2">
+                <GestureItem gesture="Draw Circle" event="CIRCULAR" isPattern />
+                <GestureItem gesture="Draw Figure-8" event="FIGURE_8" isPattern />
+                <GestureItem gesture="Zigzag Motion" event="ZIGZAG" isPattern />
+                <GestureItem gesture="Rapid Shake" event="SHAKE" isPattern />
+              </div>
+            </div>
           </Card>
         </div>
+
+        {/* PATTERN VISUALIZATION */}
+        {detectedPattern && (
+          <div className="mt-6">
+            <Card className="p-6 border-accent">
+              <div className="flex items-start gap-4">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold mb-2">
+                    Pattern Detected: {detectedPattern.name}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Confidence: {(detectedPattern.confidence * 100).toFixed(0)}%
+                  </p>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Badge variant="default" className="text-xs">Time-based Detection</Badge>
+                    <Badge variant="outline" className="text-xs">{patternHistory.length} samples</Badge>
+                  </div>
+                </div>
+                <svg width="100" height="100" viewBox="0 0 100 100" className="border rounded-lg bg-muted/20">
+                  <path 
+                    d={detectedPattern.path} 
+                    stroke="hsl(var(--accent))" 
+                    strokeWidth="2" 
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {/* Start marker */}
+                  <circle cx="10" cy="10" r="3" fill="hsl(var(--primary))" />
+                  {/* End marker */}
+                  <circle cx="90" cy="90" r="3" fill="hsl(var(--destructive))" />
+                </svg>
+              </div>
+            </Card>
+          </div>
+        )}
 
         {events.length > 0 && (
           <div className="mt-6">
@@ -490,7 +627,7 @@ const GestureRecorder = () => {
   );
 };
 
-/* ==========================  UI SUB-COMPONENTS (UNCHANGED)  ========================== */
+/* ==========================  PHONE VISUALIZATION  ========================== */
 const PhoneVisualization = ({ alpha, beta, gamma, compact }: { alpha: number | null; beta: number; gamma: number; compact?: boolean }) => {
   const size = compact ? 60 : 80;
   const height = compact ? 105 : 140;
@@ -533,10 +670,10 @@ const PhoneVisualization = ({ alpha, beta, gamma, compact }: { alpha: number | n
   );
 };
 
-const GestureItem = ({ gesture, event }: { gesture: string; event: string }) => (
+const GestureItem = ({ gesture, event, isPattern }: { gesture: string; event: string; isPattern?: boolean }) => (
   <div className="flex items-center justify-between p-2 bg-muted rounded-lg">
     <span className="text-xs font-medium">{gesture}</span>
-    <Badge variant="outline" className="text-xs">{event}</Badge>
+    <Badge variant={isPattern ? "default" : "outline"} className="text-xs">{event}</Badge>
   </div>
 );
 
