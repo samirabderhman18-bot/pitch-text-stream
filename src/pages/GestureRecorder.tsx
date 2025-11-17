@@ -11,19 +11,18 @@ import EventTimeline from '@/components/EventTimeline';
 
 /* ==========================  CONFIG  ========================== */
 const CONFIG = {
-  FPS: 15,                       // down-sample to this
-  COOLDOWN_MS: 700,              // ignore after success
-  HOLD_PASS_FRAMES: 3,           // quick flick
+  FPS: 15,
+  COOLDOWN_MS: 700,
+  HOLD_PASS_FRAMES: 3,
   HOLD_SHOT_FRAMES: 3,
   HOLD_TACKLE_FRAMES: 4,
-  HOLD_VOICE_FRAMES: 6,          // must be upside-down a bit
+  HOLD_VOICE_FRAMES: 6,
   HOLD_FOUL_FRAMES: 3,
   HOLD_CORNER_FRAMES: 4,
   HOLD_OFFSIDE_FRAMES: 4,
-  HOLD_SUB_FRAMES: 5,            // flat & steady
-  STILL_THRESHOLD: 4,            // degrees – below this we ignore everything
-  ADAPTIVE_MARGIN: 18,           // ±° around current resting angle
-  STORAGE_KEY: 'gesture-zero-v2',
+  HOLD_SUB_FRAMES: 5,
+  LEARNING_DURATION_MS: 2000,  // 2 seconds to learn jitter
+  JITTER_MARGIN: 1.5,           // multiplier for jitter zone
 } as const;
 
 /* ==========================  TYPES  ========================== */
@@ -39,11 +38,17 @@ interface GestureSample extends Vec3 {
   gamma: number | null;
   ts: number;
 }
+interface JitterZone {
+  centerBeta: number;
+  centerGamma: number;
+  radiusBeta: number;
+  radiusGamma: number;
+}
 
 /* ==========================  KALMAN 1-D  ========================== */
 class Kalman1D {
-  private q = 0.003; // process
-  private r = 0.25;  // measurement
+  private q = 0.003;
+  private r = 0.25;
   private p = 0;
   private x = 0;
   private k = 0;
@@ -55,21 +60,6 @@ class Kalman1D {
     return this.x;
   }
 }
-
-/* ==========================  UTILS  ========================== */
-const loadOffset = (): Vec3 => {
-  try {
-    const raw = localStorage.getItem(CONFIG.STORAGE_KEY);
-    return raw ? JSON.parse(raw) : { x: 0, y: 0, z: 0 };
-  } catch {
-    return { x: 0, y: 0, z: 0 };
-  }
-};
-let ZERO_OFFSET = loadOffset();
-
-const norm = (v: Vec3): number => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-const degStill = (a: number, b: number, c: number): number =>
-  Math.sqrt(a * a + b * b + c * c);
 
 /* ==========================  GESTURE DECISION  ========================== */
 type Rule = (s: GestureSample, base: GestureSample) => boolean;
@@ -105,14 +95,18 @@ const GestureRecorder = () => {
   const [gyro, setGyro] = useState<Vec3 & { alpha: number | null }>({ x: 0, y: 0, z: 0, alpha: null });
   const [permission, setPermission] = useState(false);
   const [voice, setVoice] = useState(false);
-  const [calibrating, setCalibrating] = useState(false);
+  const [isLearning, setIsLearning] = useState(false);
+  const [learningProgress, setLearningProgress] = useState(0);
+  const [jitterZone, setJitterZone] = useState<JitterZone | null>(null);
 
-  /* ----------  KALMAN INSTANCES  ---------- */
+  /* ----------  REFS  ---------- */
   const kalRef = useRef<Kalman3D>({ x: new Kalman1D(), y: new Kalman1D(), z: new Kalman1D() });
   const baseRef = useRef<GestureSample | null>(null);
   const cntRef = useRef<Record<string, number>>({});
   const lastGestureRef = useRef<string | null>(null);
   const cooldownRef = useRef(0);
+  const learningSamplesRef = useRef<{ beta: number; gamma: number }[]>([]);
+  const learningStartRef = useRef<number>(0);
 
   /* ----------  PERMISSION  ---------- */
   const ask = useCallback(async () => {
@@ -123,24 +117,62 @@ const GestureRecorder = () => {
     } else setPermission(true);
   }, [toast]);
 
-  /* ----------  CALIBRATION  ---------- */
-  const calibrate = useCallback(() => {
-    setCalibrating(true);
-    toast({ title: 'Hold steady…', description: 'Calibrating zero offset' });
-    const snap = baseRef.current;
-    if (snap) {
-      ZERO_OFFSET = { x: snap.x, y: snap.y, z: snap.z };
-      localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(ZERO_OFFSET));
-    }
-    setTimeout(() => setCalibrating(false), 1200);
-  }, [toast]);
-
   /* ----------  ADD EVENT  ---------- */
   const add = useCallback((type: SoccerEventType) => {
     const ev: SoccerEvent = { type, timestamp: Date.now(), text: `${type} detected`, confidence: 0.95, protocolType: 'Player — Event' };
     setEvents((e) => [ev, ...e]);
     toast({ title: `${type} recorded` });
   }, [toast]);
+
+  /* ----------  START LEARNING  ---------- */
+  const startLearning = useCallback(() => {
+    setIsLearning(true);
+    setLearningProgress(0);
+    learningSamplesRef.current = [];
+    learningStartRef.current = Date.now();
+    setJitterZone(null);
+    toast({ title: '🎯 Learning your grip...', description: 'Hold phone naturally for 2 seconds' });
+  }, [toast]);
+
+  /* ----------  FINISH LEARNING  ---------- */
+  const finishLearning = useCallback(() => {
+    const samples = learningSamplesRef.current;
+    if (samples.length < 5) {
+      setIsLearning(false);
+      return;
+    }
+
+    // Calculate center (mean)
+    const sumBeta = samples.reduce((acc, s) => acc + s.beta, 0);
+    const sumGamma = samples.reduce((acc, s) => acc + s.gamma, 0);
+    const centerBeta = sumBeta / samples.length;
+    const centerGamma = sumGamma / samples.length;
+
+    // Calculate radius (standard deviation * margin)
+    const varBeta = samples.reduce((acc, s) => acc + Math.pow(s.beta - centerBeta, 2), 0) / samples.length;
+    const varGamma = samples.reduce((acc, s) => acc + Math.pow(s.gamma - centerGamma, 2), 0) / samples.length;
+    const radiusBeta = Math.sqrt(varBeta) * CONFIG.JITTER_MARGIN;
+    const radiusGamma = Math.sqrt(varGamma) * CONFIG.JITTER_MARGIN;
+
+    const zone: JitterZone = {
+      centerBeta,
+      centerGamma,
+      radiusBeta: Math.max(radiusBeta, 5), // minimum 5°
+      radiusGamma: Math.max(radiusGamma, 5),
+    };
+
+    setJitterZone(zone);
+    setIsLearning(false);
+    toast({ title: '✅ Jitter zone learned!', description: `±${zone.radiusBeta.toFixed(1)}° β, ±${zone.radiusGamma.toFixed(1)}° γ` });
+  }, [toast]);
+
+  /* ----------  CHECK IF OUTSIDE JITTER ZONE  ---------- */
+  const isOutsideJitterZone = useCallback((beta: number, gamma: number): boolean => {
+    if (!jitterZone) return true; // no zone learned yet, allow all
+    const deltaBeta = Math.abs(beta - jitterZone.centerBeta);
+    const deltaGamma = Math.abs(gamma - jitterZone.centerGamma);
+    return deltaBeta > jitterZone.radiusBeta || deltaGamma > jitterZone.radiusGamma;
+  }, [jitterZone]);
 
   /* ----------  SENSOR LOOP  ---------- */
   useEffect(() => {
@@ -158,25 +190,39 @@ const GestureRecorder = () => {
       /* Update gyro display */
       setGyro({ x: β, y: γ, z: 0, alpha: α });
 
+      /* LEARNING PHASE */
+      if (isLearning) {
+        const elapsed = Date.now() - learningStartRef.current;
+        const progress = Math.min(elapsed / CONFIG.LEARNING_DURATION_MS, 1);
+        setLearningProgress(progress);
+
+        learningSamplesRef.current.push({ beta: β, gamma: γ });
+
+        if (progress >= 1) {
+          finishLearning();
+        }
+        return; // don't detect gestures while learning
+      }
+
+      /* Check if outside jitter zone */
+      if (!isOutsideJitterZone(β, γ)) {
+        cntRef.current = {};
+        return; // inside jitter zone, ignore
+      }
+
       /* Kalman smooth */
       const k = kalRef.current;
       const sample: GestureSample = {
         x: k.x.update(β),
         y: k.y.update(γ),
-        z: k.z.update(0), // we only need beta/gamma for rules
+        z: k.z.update(0),
         beta: β,
         gamma: γ,
         alpha: α,
         ts: Date.now(),
       };
 
-      /* still gate */
-      if (degStill(sample.x, sample.y, sample.z) < CONFIG.STILL_THRESHOLD) {
-        cntRef.current = {};
-        return;
-      }
-
-      /* base angle (adaptive) */
+      /* base angle */
       if (!baseRef.current) baseRef.current = { ...sample };
       const base = baseRef.current;
 
@@ -211,12 +257,23 @@ const GestureRecorder = () => {
 
     window.addEventListener('deviceorientation', onOrient);
     return () => window.removeEventListener('deviceorientation', onOrient);
-  }, [isActive, permission, add]);
+  }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, add]);
+
+  /* ----------  START LEARNING WHEN ACTIVATED  ---------- */
+  useEffect(() => {
+    if (isActive && permission) {
+      startLearning();
+    }
+  }, [isActive, permission, startLearning]);
 
   /* ----------  UI  ---------- */
   const toggle = () => {
     if (!permission) ask();
     else setIsActive((v) => !v);
+  };
+
+  const recalibrate = () => {
+    startLearning();
   };
 
   return (
@@ -226,7 +283,7 @@ const GestureRecorder = () => {
           <Button variant="ghost" size="sm" onClick={() => nav('/')} className="gap-2">
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
-          <h1 className="text-3xl font-bold">Robust Gesture Recorder</h1>
+          <h1 className="text-3xl font-bold">Smart Gesture Recorder</h1>
         </div>
 
         {!permission && (
@@ -244,43 +301,73 @@ const GestureRecorder = () => {
           </Card>
         )}
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          <Card className="p-6">
-            <h2 className="text-xl font-semibold mb-4">Phone Orientation</h2>
-            <div className="flex items-center justify-center mb-4" style={{ height: '200px' }}>
-              <PhoneVisualization alpha={gyro.alpha} beta={gyro.x} gamma={gyro.y} />
+        {/* LEARNING PHASE BANNER */}
+        {isLearning && (
+          <Card className="p-6 mb-6 border-blue-500 bg-blue-500/5">
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <h3 className="font-semibold mb-2 flex items-center gap-2">
+                  🎯 Learning your natural grip...
+                </h3>
+                <p className="text-sm text-muted-foreground mb-3">Hold your phone naturally. Walk around if you like!</p>
+                <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-blue-500 h-full transition-all duration-100"
+                    style={{ width: `${learningProgress * 100}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">{Math.round(learningProgress * 100)}% complete</p>
+              </div>
             </div>
-            <div className="space-y-2">
-              <div className="grid grid-cols-3 gap-2 text-xs font-mono">
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Alpha</div>
-                  <div>{gyro.alpha?.toFixed(1) ?? '—'}°</div>
-                </div>
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Beta</div>
-                  <div>{gyro.x.toFixed(1)}°</div>
-                </div>
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Gamma</div>
-                  <div>{gyro.y.toFixed(1)}°</div>
-                </div>
+          </Card>
+        )}
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {/* COMPACT PHONE ORIENTATION */}
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">Live Orientation</h2>
+              {jitterZone && !isLearning && (
+                <Badge variant="outline" className="text-xs">
+                  Jitter: ±{jitterZone.radiusBeta.toFixed(0)}°
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center justify-center mb-3" style={{ height: '140px' }}>
+              <PhoneVisualization alpha={gyro.alpha} beta={gyro.x} gamma={gyro.y} compact />
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+              <div className="p-2 bg-muted rounded text-center">
+                <div className="text-muted-foreground">α</div>
+                <div>{gyro.alpha?.toFixed(0) ?? '—'}°</div>
+              </div>
+              <div className="p-2 bg-muted rounded text-center">
+                <div className="text-muted-foreground">β</div>
+                <div>{gyro.x.toFixed(0)}°</div>
+              </div>
+              <div className="p-2 bg-muted rounded text-center">
+                <div className="text-muted-foreground">γ</div>
+                <div>{gyro.y.toFixed(0)}°</div>
               </div>
             </div>
           </Card>
 
+          {/* CONTROLS */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Controls</h2>
-            <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-4">
+            <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-3">
               {isActive ? 'Stop Recording' : 'Start Recording'}
             </Button>
 
-            <Button onClick={calibrate} variant="outline" size="sm" className="w-full mb-6" disabled={calibrating}>
-              <Zap className="h-4 w-4 mr-2" />
-              {calibrating ? 'Calibrating…' : 'Calibrate Zero Offset'}
-            </Button>
+            {jitterZone && !isLearning && (
+              <Button onClick={recalibrate} variant="outline" size="sm" className="w-full mb-4">
+                <Zap className="h-4 w-4 mr-2" />
+                Re-learn Jitter Zone
+              </Button>
+            )}
 
             {currentGesture && (
-              <div className="mb-6">
+              <div className="mb-4">
                 <Badge variant="default" className="text-lg px-4 py-2">{currentGesture}</Badge>
               </div>
             )}
@@ -291,11 +378,20 @@ const GestureRecorder = () => {
                 <p className="text-xs text-muted-foreground mt-1">Hold phone upside-down and speak the player number</p>
               </div>
             )}
+
+            {jitterZone && !isLearning && (
+              <div className="mt-4 p-3 bg-muted/50 rounded-lg">
+                <p className="text-xs text-muted-foreground">
+                  ✓ Jitter zone active: ignoring small movements within ±{jitterZone.radiusBeta.toFixed(1)}° (β) and ±{jitterZone.radiusGamma.toFixed(1)}° (γ)
+                </p>
+              </div>
+            )}
           </Card>
 
+          {/* GESTURE GUIDE */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Gesture Guide</h2>
-            <div className="space-y-3">
+            <div className="space-y-2">
               <GestureItem gesture="Flick Forward" event="PASS" />
               <GestureItem gesture="Back Flick" event="SHOT" />
               <GestureItem gesture="Tilt Left/Right" event="TACKLE" />
@@ -322,13 +418,13 @@ const GestureRecorder = () => {
 };
 
 /* ==========================  PHONE VISUALIZATION  ========================== */
-const PhoneVisualization = ({ alpha, beta, gamma }: { alpha: number | null; beta: number; gamma: number }) => {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
+const PhoneVisualization = ({ alpha, beta, gamma, compact }: { alpha: number | null; beta: number; gamma: number; compact?: boolean }) => {
+  const size = compact ? 60 : 80;
+  const height = compact ? 105 : 140;
   
-  // Convert device orientation to CSS 3D transforms
   const style: React.CSSProperties = {
-    width: '80px',
-    height: '140px',
+    width: `${size}px`,
+    height: `${height}px`,
     position: 'relative',
     transformStyle: 'preserve-3d',
     transform: `
@@ -340,32 +436,23 @@ const PhoneVisualization = ({ alpha, beta, gamma }: { alpha: number | null; beta
   };
 
   return (
-    <div style={{ perspective: '800px' }}>
+    <div style={{ perspective: '600px' }}>
       <div style={style}>
-        {/* Phone body */}
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl border-4 border-slate-600 shadow-2xl">
-          {/* Screen */}
-          <div className="absolute inset-3 bg-gradient-to-br from-blue-400 to-blue-600 rounded-xl opacity-80" />
-          
-          {/* Camera notch */}
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-950 rounded-full" />
-          
-          {/* Home indicator */}
-          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-16 h-1 bg-slate-950/40 rounded-full" />
-          
-          {/* Top label */}
-          <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-xs font-medium text-muted-foreground whitespace-nowrap">
-            Front
-          </div>
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl border-2 border-slate-600 shadow-xl">
+          <div className="absolute inset-2 bg-gradient-to-br from-blue-400 to-blue-600 rounded-xl opacity-80" />
+          {!compact && (
+            <>
+              <div className="absolute top-1.5 left-1/2 -translate-x-1/2 w-10 h-1 bg-slate-950 rounded-full" />
+              <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-slate-950/40 rounded-full" />
+            </>
+          )}
         </div>
-
-        {/* Side shadows for depth */}
         <div 
           className="absolute inset-0 rounded-2xl" 
           style={{ 
-            transform: 'translateZ(-5px)',
-            background: 'rgba(0,0,0,0.5)',
-            filter: 'blur(2px)'
+            transform: 'translateZ(-3px)',
+            background: 'rgba(0,0,0,0.4)',
+            filter: 'blur(1px)'
           }} 
         />
       </div>
@@ -374,9 +461,9 @@ const PhoneVisualization = ({ alpha, beta, gamma }: { alpha: number | null; beta
 };
 
 const GestureItem = ({ gesture, event }: { gesture: string; event: string }) => (
-  <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-    <span className="text-sm font-medium">{gesture}</span>
-    <Badge variant="outline">{event}</Badge>
+  <div className="flex items-center justify-between p-2 bg-muted rounded-lg">
+    <span className="text-xs font-medium">{gesture}</span>
+    <Badge variant="outline" className="text-xs">{event}</Badge>
   </div>
 );
 
