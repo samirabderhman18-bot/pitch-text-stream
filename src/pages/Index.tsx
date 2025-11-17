@@ -4,8 +4,8 @@ import TranscriptionDisplay from '@/components/TranscriptionDisplay';
 import EventTimeline from '@/components/EventTimeline';
 import EventLog from '@/components/EventLog';
 import RosterInput from '@/components/RosterInput';
-import PlayerManagementTable from '@/components/PlayerManagementTable';
 import { supabase } from '@/integrations/supabase/client';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { SoccerEvent } from '@/types/soccer-events';
 import { usePlayers } from '@/hooks/usePlayers';
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,7 @@ const Index = () => {
 
   // --- UPDATED STATE & HOOKS ---
   const { toast } = useToast();
+  const navigate = useNavigate();
   // Use our updated hook. It provides the player list and the function to fetch them.
   const { players, fetchAllPlayers } = usePlayers();
 
@@ -293,13 +295,21 @@ const Index = () => {
                 <RosterInput />
               </div>
               
-              <div>
-                <Label>Manage Player Numbers</Label>
-                <p className="text-sm text-muted-foreground mb-2">Edit jersey numbers for accurate player detection</p>
-                <PlayerManagementTable 
-                  players={players} 
-                  onPlayersUpdate={fetchAllPlayers}
-                />
+              <div className="flex gap-3">
+                <Button 
+                  onClick={() => navigate('/players')}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Manage Players
+                </Button>
+                <Button 
+                  onClick={() => navigate('/gestures')}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Gesture Recorder
+                </Button>
               </div>
             </div>
           </div>
