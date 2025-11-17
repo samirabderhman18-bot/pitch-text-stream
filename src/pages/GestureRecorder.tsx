@@ -155,6 +155,9 @@ const GestureRecorder = () => {
       const γ = e.gamma ?? 0;
       const α = e.alpha;
 
+      /* Update gyro display */
+      setGyro({ x: β, y: γ, z: 0, alpha: α });
+
       /* Kalman smooth */
       const k = kalRef.current;
       const sample: GestureSample = {
@@ -241,7 +244,30 @@ const GestureRecorder = () => {
           </Card>
         )}
 
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <Card className="p-6">
+            <h2 className="text-xl font-semibold mb-4">Phone Orientation</h2>
+            <div className="flex items-center justify-center mb-4" style={{ height: '200px' }}>
+              <PhoneVisualization alpha={gyro.alpha} beta={gyro.x} gamma={gyro.y} />
+            </div>
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+                <div className="p-2 bg-muted rounded">
+                  <div className="text-muted-foreground">Alpha</div>
+                  <div>{gyro.alpha?.toFixed(1) ?? '—'}°</div>
+                </div>
+                <div className="p-2 bg-muted rounded">
+                  <div className="text-muted-foreground">Beta</div>
+                  <div>{gyro.x.toFixed(1)}°</div>
+                </div>
+                <div className="p-2 bg-muted rounded">
+                  <div className="text-muted-foreground">Gamma</div>
+                  <div>{gyro.y.toFixed(1)}°</div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Controls</h2>
             <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-4">
@@ -265,24 +291,6 @@ const GestureRecorder = () => {
                 <p className="text-xs text-muted-foreground mt-1">Hold phone upside-down and speak the player number</p>
               </div>
             )}
-
-            <div className="mt-6 space-y-2">
-              <h3 className="font-semibold text-sm">Live Gyroscope (°)</h3>
-              <div className="grid grid-cols-3 gap-2 text-xs font-mono">
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Alpha</div>
-                  <div>{gyro.alpha?.toFixed(1) ?? '—'}</div>
-                </div>
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Beta</div>
-                  <div>{gyro.x.toFixed(1)}</div>
-                </div>
-                <div className="p-2 bg-muted rounded">
-                  <div className="text-muted-foreground">Gamma</div>
-                  <div>{gyro.y.toFixed(1)}</div>
-                </div>
-              </div>
-            </div>
           </Card>
 
           <Card className="p-6">
@@ -308,6 +316,58 @@ const GestureRecorder = () => {
             </Card>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+/* ==========================  PHONE VISUALIZATION  ========================== */
+const PhoneVisualization = ({ alpha, beta, gamma }: { alpha: number | null; beta: number; gamma: number }) => {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  
+  // Convert device orientation to CSS 3D transforms
+  const style: React.CSSProperties = {
+    width: '80px',
+    height: '140px',
+    position: 'relative',
+    transformStyle: 'preserve-3d',
+    transform: `
+      rotateZ(${alpha ?? 0}deg)
+      rotateX(${beta}deg)
+      rotateY(${gamma}deg)
+    `,
+    transition: 'transform 0.1s ease-out',
+  };
+
+  return (
+    <div style={{ perspective: '800px' }}>
+      <div style={style}>
+        {/* Phone body */}
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl border-4 border-slate-600 shadow-2xl">
+          {/* Screen */}
+          <div className="absolute inset-3 bg-gradient-to-br from-blue-400 to-blue-600 rounded-xl opacity-80" />
+          
+          {/* Camera notch */}
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-12 h-1.5 bg-slate-950 rounded-full" />
+          
+          {/* Home indicator */}
+          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 w-16 h-1 bg-slate-950/40 rounded-full" />
+          
+          {/* Top label */}
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-xs font-medium text-muted-foreground whitespace-nowrap">
+            Front
+          </div>
+        </div>
+
+        {/* Side shadows for depth */}
+        <div 
+          className="absolute inset-0 rounded-2xl" 
+          style={{ 
+            transform: 'translateZ(-5px)',
+            background: 'rgba(0,0,0,0.5)',
+            filter: 'blur(2px)'
+          }} 
+        />
       </div>
     </div>
   );
