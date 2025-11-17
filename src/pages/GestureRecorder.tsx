@@ -49,35 +49,6 @@ const detectGestureRaw = (data: {
   return null;
 };
 
-/* ----------  STABLE DETECTOR HOOK ---------- */
-const useStableDetector = () => {
-  const betaFilter  = useRef(new Kalman1D());
-  const gammaFilter = useRef(new Kalman1D());
-  const cnt         = useRef<Record<string, number>>({});
-
-  return useCallback((data: {
-    alpha: number | null;
-    beta: number | null;
-    gamma: number | null;
-  }) => {
-    const { beta, gamma } = data;
-    if (beta === null || gamma === null) return null;
-
-    const β = betaFilter.current.update(beta);
-    const γ = gammaFilter.current.update(gamma);
-
-    const raw = detectGestureRaw({ ...data, beta: β, gamma: γ });
-    if (!raw) { cnt.current = {}; return null; }
-
-    cnt.current[raw] = (cnt.current[raw] || 0) + 1;
-    if (cnt.current[raw] >= GESTURE_HOLDFRAMES) {
-      cnt.current = {};
-      return raw;
-    }
-    return null;
-  }, []);
-};
-
 /* ----------  COMPONENT ---------- */
 interface GestureData {
   alpha: number | null;
@@ -100,6 +71,36 @@ const GestureRecorder = () => {
   });
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+
+  // Move the hook INSIDE the component
+  const betaFilterRef = useRef(new Kalman1D());
+  const gammaFilterRef = useRef(new Kalman1D());
+  const cntRef = useRef<Record<string, number>>({});
+
+  const stableDetect = useCallback((data: {
+    alpha: number | null;
+    beta: number | null;
+    gamma: number | null;
+  }) => {
+    const { beta, gamma } = data;
+    if (beta === null || gamma === null) return null;
+
+    const β = betaFilterRef.current.update(beta);
+    const γ = gammaFilterRef.current.update(gamma);
+
+    const raw = detectGestureRaw({ ...data, beta: β, gamma: γ });
+    if (!raw) { 
+      cntRef.current = {}; 
+      return null; 
+    }
+
+    cntRef.current[raw] = (cntRef.current[raw] || 0) + 1;
+    if (cntRef.current[raw] >= GESTURE_HOLDFRAMES) {
+      cntRef.current = {};
+      return raw;
+    }
+    return null;
+  }, []);
 
   /* ----------  PERMISSION ---------- */
   const requestPermission = async () => {
@@ -139,8 +140,6 @@ const GestureRecorder = () => {
     let cooldownUntil = 0;
     let frameCount = 0;
 
-    const stableDetect = useStableDetector();
-
     const handleOrientation = (event: DeviceOrientationEvent) => {
       frameCount++;
       if (frameCount % Math.round(60 / FPS) !== 0) return;
@@ -173,7 +172,7 @@ const GestureRecorder = () => {
 
     window.addEventListener('deviceorientation', handleOrientation);
     return () => window.removeEventListener('deviceorientation', handleOrientation);
-  }, [isActive, permissionGranted, addEvent]);
+  }, [isActive, permissionGranted, addEvent, stableDetect]);
 
   /* ----------  UI ---------- */
   const toggleActive = () => {
