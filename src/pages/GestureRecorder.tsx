@@ -80,29 +80,53 @@ class Kalman1D {
 interface ThresholdConfig {
   PASS_MIN: number;
   PASS_MAX: number;
+  PASS_ENABLED: boolean;
   SHOT_MIN: number;
+  SHOT_ENABLED: boolean;
   TACKLE_MIN: number;
+  TACKLE_ENABLED: boolean;
   VOICE_TAG_THRESHOLD: number;
+  VOICE_TAG_ENABLED: boolean;
   FOUL_GAMMA_MIN: number;
   FOUL_BETA_MIN: number;
+  FOUL_ENABLED: boolean;
   CORNER_MIN: number;
   CORNER_MAX: number;
+  CORNER_ENABLED: boolean;
   OFFSIDE_MIN: number;
   OFFSIDE_MAX: number;
+  OFFSIDE_ENABLED: boolean;
+  SUBSTITUTION_ENABLED: boolean;
+  CIRCULAR_ENABLED: boolean;
+  FIGURE_8_ENABLED: boolean;
+  ZIGZAG_ENABLED: boolean;
+  SHAKE_ENABLED: boolean;
 }
 
 const DEFAULT_THRESHOLDS: ThresholdConfig = {
   PASS_MIN: 40,
   PASS_MAX: 85,
+  PASS_ENABLED: true,
   SHOT_MIN: 25,
+  SHOT_ENABLED: true,
   TACKLE_MIN: 40,
+  TACKLE_ENABLED: true,
   VOICE_TAG_THRESHOLD: 110,
+  VOICE_TAG_ENABLED: true,
   FOUL_GAMMA_MIN: 55,
   FOUL_BETA_MIN: 25,
+  FOUL_ENABLED: true,
   CORNER_MIN: 15,
   CORNER_MAX: 40,
+  CORNER_ENABLED: true,
   OFFSIDE_MIN: 15,
   OFFSIDE_MAX: 40,
+  OFFSIDE_ENABLED: true,
+  SUBSTITUTION_ENABLED: true,
+  CIRCULAR_ENABLED: true,
+  FIGURE_8_ENABLED: true,
+  ZIGZAG_ENABLED: true,
+  SHAKE_ENABLED: true,
 };
 
 type Rule = (s: GestureSample, base: GestureSample, thresholds: ThresholdConfig) => boolean;
@@ -250,7 +274,9 @@ const GestureRecorder = () => {
     const saved = localStorage.getItem('gesture-thresholds');
     if (saved) {
       try {
-        setThresholds(JSON.parse(saved));
+        const loadedThresholds = JSON.parse(saved);
+        // Merge with defaults to ensure new properties are present
+        setThresholds({ ...DEFAULT_THRESHOLDS, ...loadedThresholds });
       } catch (e) {
         console.warn('Failed to load thresholds:', e);
       }
@@ -380,13 +406,13 @@ const GestureRecorder = () => {
 
         // Find best pattern
         const patterns = [
-          { name: 'CIRCULAR', ...circular },
-          { name: 'FIGURE_8', ...figure8 },
-          { name: 'ZIGZAG', ...zigzag },
-          { name: 'SHAKE', ...shake },
+          { name: 'CIRCULAR', ...circular, enabled: thresholds.CIRCULAR_ENABLED },
+          { name: 'FIGURE_8', ...figure8, enabled: thresholds.FIGURE_8_ENABLED },
+          { name: 'ZIGZAG', ...zigzag, enabled: thresholds.ZIGZAG_ENABLED },
+          { name: 'SHAKE', ...shake, enabled: thresholds.SHAKE_ENABLED },
         ];
         
-        const best = patterns.reduce((max, p) => p.confidence > max.confidence ? p : max);
+        const best = patterns.filter(p => p.enabled).reduce((max, p) => p.confidence > max.confidence ? p : max, { confidence: 0 });
         
         if (best.detected && best.confidence > 0.7) {
           // Generate SVG path for visualization
@@ -440,7 +466,8 @@ const GestureRecorder = () => {
 
       let winner: string | null = null;
       for (const [name, rule] of Object.entries(RULES)) {
-        if (rule(sample, base, thresholds)) {
+        const isEnabled = thresholds[(name + '_ENABLED') as keyof ThresholdConfig];
+        if (isEnabled && rule(sample, base, thresholds)) {
           cntRef.current[name] = (cntRef.current[name] || 0) + 1;
           if (cntRef.current[name] >= FRAMES_NEEDED[name]) {
             winner = name;
