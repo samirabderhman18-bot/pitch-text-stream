@@ -293,6 +293,40 @@ const GestureRecorder = () => {
   }, [toast]);
 
   /* ----------  ADD EVENT  ---------- */
+
+  // Update the add function to create proper GestureCapturedEvent
+const add = useCallback((gestureType: string, soccerEventType: string) => {
+  const ev: GestureCapturedEvent = {
+    eventSource: 'gesture-capture',
+    gestureType: gestureType as 'FLICK_FORWARD' | 'FLICK_BACK' | 'TILT' | 'HOLD_INVERTED',
+    soccerEventType: soccerEventType as 'PASS' | 'SHOT' | 'TACKLE' | 'VOICE_TAG',
+    timestamp: Date.now(),
+    text: `${gestureType} → ${soccerEventType}`,
+    confidence: 0.95,
+  };
+  setEvents((e) => [ev, ...e]);
+  toast({ title: `${soccerEventType} recorded via ${gestureType}` });
+}, [toast]);
+
+// Update pattern detection to create PatternCapturedEvent
+if (best.detected && best.confidence > 0.7) {
+  const patternEvent: PatternCapturedEvent = {
+    eventSource: 'pattern-capture',
+    patternType: best.name as 'CIRCULAR' | 'FIGURE_8' | 'ZIGZAG' | 'SHAKE',
+    soccerEventType: best.name, // or map to actual soccer event
+    patternData: {
+      path: pathData,
+      velocity: updatedHistory[updatedHistory.length - 1].velocity,
+      duration: now - updatedHistory[0].ts,
+      samples: updatedHistory.length,
+    },
+    timestamp: Date.now(),
+    text: `${best.name} pattern detected`,
+    confidence: best.confidence,
+  };
+  setEvents((e) => [patternEvent, ...e]);
+  // ... rest of detection code
+}
   const add = useCallback((type: SoccerEventType) => {
     const ev: SoccerEvent = { type, timestamp: Date.now(), text: `${type} detected`, confidence: 0.95, protocolType: 'Player — Event' };
     setEvents((e) => [ev, ...e]);
