@@ -85,6 +85,71 @@ const Index = () => {
     setLogs(prev => [{ timestamp: Date.now(), message, type }, ...prev].slice(0, 50));
   };
 
+
+  // Convert backend EventData to frontend SoccerEvent format
+const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
+  // Determine event category based on type and data
+  if (eventData.target_player) {
+    // Player-to-player interaction
+    return {
+      eventSource: 'text-detection',
+      category: 'player-interaction',
+      type: eventData.event_type as 'PASS' | 'TACKLE' | 'INTERCEPTION',
+      playerA: eventData.player_name || 'Unknown',
+      playerB: eventData.target_player,
+      text: eventData.transcription,
+      timestamp: Date.now(),
+      confidence: 0.8,
+    } as PlayerToPlayerEvent;
+  } else if (['SHOT', 'GOAL', 'SAVE'].includes(eventData.event_type)) {
+    // Player action
+    return {
+      eventSource: 'text-detection',
+      category: 'player-action',
+      type: eventData.event_type as 'SHOT' | 'GOAL' | 'SAVE',
+      player: eventData.player_name || 'Unknown',
+      text: eventData.transcription,
+      timestamp: Date.now(),
+      confidence: 0.8,
+    } as PlayerActionEvent;
+  } else if (['FOUL', 'YELLOW_CARD', 'RED_CARD'].includes(eventData.event_type)) {
+    // Referee decision
+    return {
+      eventSource: 'text-detection',
+      category: 'referee-decision',
+      type: eventData.event_type as 'FOUL' | 'YELLOW_CARD' | 'RED_CARD',
+      referee: 'Unknown Referee',
+      player: eventData.player_name || 'Unknown',
+      text: eventData.transcription,
+      timestamp: Date.now(),
+      confidence: 0.8,
+    } as RefereeEvent;
+  } else if (eventData.event_type === 'SUBSTITUTION') {
+    // Substitution
+    return {
+      eventSource: 'text-detection',
+      category: 'substitution',
+      type: 'SUBSTITUTION',
+      playerOut: eventData.player_name || 'Unknown',
+      playerIn: eventData.target_player || 'Unknown',
+      team: eventData.team || 'Unknown Team',
+      text: eventData.transcription,
+      timestamp: Date.now(),
+      confidence: 0.8,
+    } as SubstitutionEvent;
+  } else {
+    // Team event (default)
+    return {
+      eventSource: 'text-detection',
+      category: 'team-action',
+      type: eventData.event_type as 'CORNER' | 'FREEKICK' | 'PENALTY' | 'OFFSIDE',
+      team: eventData.team || 'Unknown Team',
+      text: eventData.transcription,
+      timestamp: Date.now(),
+      confidence: 0.8,
+    } as TeamEvent;
+  }
+};
   // Convert backend EventData to frontend SoccerEvent format for display
   const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
     let protocolType: SoccerEvent['protocolType'] = 'Player — Event';
