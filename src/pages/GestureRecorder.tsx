@@ -3,11 +3,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Smartphone, AlertCircle, Zap } from 'lucide-react';
+import { ArrowLeft, Smartphone, AlertCircle, Zap, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { SoccerEvent, SoccerEventType } from '@/types/soccer-events';
 import EventTimeline from '@/components/EventTimeline';
+import { triggerHaptic } from '@/utils/haptic-feedback';
 
 /* ==========================  CONFIG  ========================== */
 const CONFIG = {
@@ -76,15 +77,43 @@ class Kalman1D {
 }
 
 /* ==========================  GESTURE DECISION  ========================== */
-type Rule = (s: GestureSample, base: GestureSample) => boolean;
+interface ThresholdConfig {
+  PASS_MIN: number;
+  PASS_MAX: number;
+  SHOT_MIN: number;
+  TACKLE_MIN: number;
+  VOICE_TAG_THRESHOLD: number;
+  FOUL_GAMMA_MIN: number;
+  FOUL_BETA_MIN: number;
+  CORNER_MIN: number;
+  CORNER_MAX: number;
+  OFFSIDE_MIN: number;
+  OFFSIDE_MAX: number;
+}
+
+const DEFAULT_THRESHOLDS: ThresholdConfig = {
+  PASS_MIN: 40,
+  PASS_MAX: 85,
+  SHOT_MIN: 25,
+  TACKLE_MIN: 40,
+  VOICE_TAG_THRESHOLD: 110,
+  FOUL_GAMMA_MIN: 55,
+  FOUL_BETA_MIN: 25,
+  CORNER_MIN: 15,
+  CORNER_MAX: 40,
+  OFFSIDE_MIN: 15,
+  OFFSIDE_MAX: 40,
+};
+
+type Rule = (s: GestureSample, base: GestureSample, thresholds: ThresholdConfig) => boolean;
 const RULES: Record<string, Rule> = {
-  PASS: (s, b) => s.beta > b.beta + 40 && s.beta < b.beta + 85 && Math.abs(s.gamma - b.gamma) < 25,
-  SHOT: (s, b) => s.beta < b.beta - 25 && Math.abs(s.gamma - b.gamma) < 25,
-  TACKLE: (s, b) => Math.abs(s.gamma - b.gamma) > 40 && Math.abs(s.beta - b.beta) < 25,
-  VOICE_TAG: (s, b) => s.beta < -110 || s.beta > 110,
-  FOUL: (s, b) => Math.abs(s.gamma - b.gamma) > 55 && Math.abs(s.beta - b.beta) > 25,
-  CORNER: (s, b) => s.gamma > b.gamma + 15 && s.gamma < b.gamma + 40 && Math.abs(s.beta - b.beta) < 12,
-  OFFSIDE: (s, b) => s.gamma < b.gamma - 15 && s.gamma > b.gamma - 40 && Math.abs(s.beta - b.beta) < 12,
+  PASS: (s, b, t) => s.beta > b.beta + t.PASS_MIN && s.beta < b.beta + t.PASS_MAX && Math.abs(s.gamma - b.gamma) < 25,
+  SHOT: (s, b, t) => s.beta < b.beta - t.SHOT_MIN && Math.abs(s.gamma - b.gamma) < 25,
+  TACKLE: (s, b, t) => Math.abs(s.gamma - b.gamma) > t.TACKLE_MIN && Math.abs(s.beta - b.beta) < 25,
+  VOICE_TAG: (s, b, t) => s.beta < -t.VOICE_TAG_THRESHOLD || s.beta > t.VOICE_TAG_THRESHOLD,
+  FOUL: (s, b, t) => Math.abs(s.gamma - b.gamma) > t.FOUL_GAMMA_MIN && Math.abs(s.beta - b.beta) > t.FOUL_BETA_MIN,
+  CORNER: (s, b, t) => s.gamma > b.gamma + t.CORNER_MIN && s.gamma < b.gamma + t.CORNER_MAX && Math.abs(s.beta - b.beta) < 12,
+  OFFSIDE: (s, b, t) => s.gamma < b.gamma - t.OFFSIDE_MIN && s.gamma > b.gamma - t.OFFSIDE_MAX && Math.abs(s.beta - b.beta) < 12,
   SUBSTITUTION: (s, b) => Math.abs(s.beta - b.beta) < 10 && Math.abs(s.gamma - b.gamma) < 10,
 };
 
@@ -205,6 +234,7 @@ const GestureRecorder = () => {
   const [jitterZone, setJitterZone] = useState<JitterZone | null>(null);
   const [patternHistory, setPatternHistory] = useState<PatternPoint[]>([]);
   const [detectedPattern, setDetectedPattern] = useState<MovementPattern | null>(null);
+  const [thresholds, setThresholds] = useState<ThresholdConfig>(DEFAULT_THRESHOLDS);
 
   /* ----------  REFS  ---------- */
   const kalRef = useRef<Kalman3D>({ x: new Kalman1D(), y: new Kalman1D(), z: new Kalman1D() });
@@ -214,6 +244,18 @@ const GestureRecorder = () => {
   const cooldownRef = useRef(0);
   const learningSamplesRef = useRef<{ beta: number; gamma: number }[]>([]);
   const learningStartRef = useRef<number>(0);
+
+  /* ----------  LOAD THRESHOLDS  ---------- */
+  useEffect(() => {
+    const saved = localStorage.getItem('gesture-thresholds');
+    if (saved) {
+      try {
+        setThresholds(JSON.parse(saved));
+      } catch (e) {
+        console.warn('Failed to load thresholds:', e);
+      }
+    }
+  }, []);
 
   /* ----------  PERMISSION  ---------- */
   const ask = useCallback(async () => {
@@ -369,6 +411,7 @@ const GestureRecorder = () => {
 
           // Record as event
           add(best.name as SoccerEventType);
+          triggerHaptic('medium');
           
           // Clear history after detection
           setPatternHistory([]);
@@ -397,7 +440,7 @@ const GestureRecorder = () => {
 
       let winner: string | null = null;
       for (const [name, rule] of Object.entries(RULES)) {
-        if (rule(sample, base)) {
+        if (rule(sample, base, thresholds)) {
           cntRef.current[name] = (cntRef.current[name] || 0) + 1;
           if (cntRef.current[name] >= FRAMES_NEEDED[name]) {
             winner = name;
@@ -412,10 +455,13 @@ const GestureRecorder = () => {
       lastGestureRef.current = winner;
 
       setCurrentGesture(winner);
-      if (winner === 'VOICE_TAG') setVoice(true);
-      else {
+      if (winner === 'VOICE_TAG') {
+        setVoice(true);
+        triggerHaptic('light');
+      } else {
         add(winner as SoccerEventType);
         setVoice(false);
+        triggerHaptic('medium');
       }
       setTimeout(() => setCurrentGesture(null), 1000);
     };
@@ -444,11 +490,16 @@ const GestureRecorder = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-pitch-green/5">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-6 flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => nav('/')} className="gap-2">
-            <ArrowLeft className="h-4 w-4" /> Back
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => nav('/')} className="gap-2">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </Button>
+            <h1 className="text-3xl font-bold">Smart Gesture Recorder</h1>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => nav('/calibration')} className="gap-2">
+            <Settings className="h-4 w-4" /> Calibrate
           </Button>
-          <h1 className="text-3xl font-bold">Smart Gesture Recorder</h1>
         </div>
 
         {!permission && (

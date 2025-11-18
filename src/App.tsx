@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import PlayerManagement from "./pages/PlayerManagement";
 import GestureRecorder from "./pages/GestureRecorder";
+import Calibration from "./pages/Calibration";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -20,6 +21,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/players" element={<PlayerManagement />} />
           <Route path="/gestures" element={<GestureRecorder />} />
+          <Route path="/calibration" element={<Calibration />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
