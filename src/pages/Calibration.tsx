@@ -29,6 +29,11 @@ interface ThresholdConfig {
   OFFSIDE_MIN: number;
   OFFSIDE_MAX: number;
   OFFSIDE_ENABLED: boolean;
+  SUBSTITUTION_ENABLED: boolean;
+  CIRCULAR_ENABLED: boolean;
+  FIGURE_8_ENABLED: boolean;
+  ZIGZAG_ENABLED: boolean;
+  SHAKE_ENABLED: boolean;
 }
 
 const DEFAULT_THRESHOLDS: ThresholdConfig = {
@@ -50,6 +55,11 @@ const DEFAULT_THRESHOLDS: ThresholdConfig = {
   OFFSIDE_MIN: 15,
   OFFSIDE_MAX: 40,
   OFFSIDE_ENABLED: true,
+  SUBSTITUTION_ENABLED: true,
+  CIRCULAR_ENABLED: true,
+  FIGURE_8_ENABLED: true,
+  ZIGZAG_ENABLED: true,
+  SHAKE_ENABLED: true,
 };
 
 export default function Calibration() {
@@ -511,6 +521,68 @@ export default function Calibration() {
                     disabled={!thresholds.OFFSIDE_ENABLED}
                   />
                   <span className="text-sm font-mono w-12">{thresholds.OFFSIDE_MAX}°</span>
+                </div>
+              </div>
+            </div>
+
+            {/* SUBSTITUTION */}
+            <div>
+              <div className="flex items-center">
+                <Checkbox
+                  id="substitution-enabled"
+                  checked={thresholds.SUBSTITUTION_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, SUBSTITUTION_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="substitution-enabled" className="text-sm font-medium">SUBSTITUTION (Flat & Steady)</label>
+              </div>
+            </div>
+
+            <div className="border-t pt-6">
+              <h4 className="font-semibold mb-4">Movement Patterns</h4>
+              <div className="space-y-4">
+                {/* CIRCULAR */}
+                <div className="flex items-center">
+                  <Checkbox
+                    id="circular-enabled"
+                    checked={thresholds.CIRCULAR_ENABLED}
+                    onCheckedChange={(checked) => setThresholds({ ...thresholds, CIRCULAR_ENABLED: !!checked })}
+                    className="mr-2"
+                  />
+                  <label htmlFor="circular-enabled" className="text-sm font-medium">CIRCULAR (Draw Circle)</label>
+                </div>
+
+                {/* FIGURE_8 */}
+                <div className="flex items-center">
+                  <Checkbox
+                    id="figure8-enabled"
+                    checked={thresholds.FIGURE_8_ENABLED}
+                    onCheckedChange={(checked) => setThresholds({ ...thresholds, FIGURE_8_ENABLED: !!checked })}
+                    className="mr-2"
+                  />
+                  <label htmlFor="figure8-enabled" className="text-sm font-medium">FIGURE_8 (Draw Figure-8)</label>
+                </div>
+
+                {/* ZIGZAG */}
+                <div className="flex items-center">
+                  <Checkbox
+                    id="zigzag-enabled"
+                    checked={thresholds.ZIGZAG_ENABLED}
+                    onCheckedChange={(checked) => setThresholds({ ...thresholds, ZIGZAG_ENABLED: !!checked })}
+                    className="mr-2"
+                  />
+                  <label htmlFor="zigzag-enabled" className="text-sm font-medium">ZIGZAG (Zigzag Motion)</label>
+                </div>
+
+                {/* SHAKE */}
+                <div className="flex items-center">
+                  <Checkbox
+                    id="shake-enabled"
+                    checked={thresholds.SHAKE_ENABLED}
+                    onCheckedChange={(checked) => setThresholds({ ...thresholds, SHAKE_ENABLED: !!checked })}
+                    className="mr-2"
+                  />
+                  <label htmlFor="shake-enabled" className="text-sm font-medium">SHAKE (Rapid Shake)</label>
                 </div>
               </div>
             </div>
