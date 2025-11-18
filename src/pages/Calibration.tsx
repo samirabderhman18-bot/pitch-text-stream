@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ArrowLeft, RotateCcw, Smartphone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
@@ -12,29 +13,43 @@ import { triggerHaptic } from '@/utils/haptic-feedback';
 interface ThresholdConfig {
   PASS_MIN: number;
   PASS_MAX: number;
+  PASS_ENABLED: boolean;
   SHOT_MIN: number;
+  SHOT_ENABLED: boolean;
   TACKLE_MIN: number;
+  TACKLE_ENABLED: boolean;
   VOICE_TAG_THRESHOLD: number;
+  VOICE_TAG_ENABLED: boolean;
   FOUL_GAMMA_MIN: number;
   FOUL_BETA_MIN: number;
+  FOUL_ENABLED: boolean;
   CORNER_MIN: number;
   CORNER_MAX: number;
+  CORNER_ENABLED: boolean;
   OFFSIDE_MIN: number;
   OFFSIDE_MAX: number;
+  OFFSIDE_ENABLED: boolean;
 }
 
 const DEFAULT_THRESHOLDS: ThresholdConfig = {
   PASS_MIN: 40,
   PASS_MAX: 85,
+  PASS_ENABLED: true,
   SHOT_MIN: 25,
+  SHOT_ENABLED: true,
   TACKLE_MIN: 40,
+  TACKLE_ENABLED: true,
   VOICE_TAG_THRESHOLD: 110,
+  VOICE_TAG_ENABLED: true,
   FOUL_GAMMA_MIN: 55,
   FOUL_BETA_MIN: 25,
+  FOUL_ENABLED: true,
   CORNER_MIN: 15,
   CORNER_MAX: 40,
+  CORNER_ENABLED: true,
   OFFSIDE_MIN: 15,
   OFFSIDE_MAX: 40,
+  OFFSIDE_ENABLED: true,
 };
 
 export default function Calibration() {
@@ -55,7 +70,9 @@ export default function Calibration() {
     const saved = localStorage.getItem('gesture-thresholds');
     if (saved) {
       try {
-        setThresholds(JSON.parse(saved));
+        const loadedThresholds = JSON.parse(saved);
+        // Merge with defaults to ensure new properties are present
+        setThresholds({ ...DEFAULT_THRESHOLDS, ...loadedThresholds });
       } catch (e) {
         console.warn('Failed to load thresholds:', e);
       }
@@ -128,25 +145,32 @@ export default function Calibration() {
       let detected: string | null = null;
 
       // Test each gesture with current thresholds
-      if (β > base.beta + thresholds.PASS_MIN && 
-          β < base.beta + thresholds.PASS_MAX && 
+      if (thresholds.PASS_ENABLED &&
+          β > base.beta + thresholds.PASS_MIN &&
+          β < base.beta + thresholds.PASS_MAX &&
           Math.abs(γ - base.gamma) < 25) {
         detected = 'PASS';
-      } else if (β < base.beta - thresholds.SHOT_MIN && Math.abs(γ - base.gamma) < 25) {
+      } else if (thresholds.SHOT_ENABLED &&
+                 β < base.beta - thresholds.SHOT_MIN && Math.abs(γ - base.gamma) < 25) {
         detected = 'SHOT';
-      } else if (Math.abs(γ - base.gamma) > thresholds.TACKLE_MIN && Math.abs(β - base.beta) < 25) {
+      } else if (thresholds.TACKLE_ENABLED &&
+                 Math.abs(γ - base.gamma) > thresholds.TACKLE_MIN && Math.abs(β - base.beta) < 25) {
         detected = 'TACKLE';
-      } else if (β < -thresholds.VOICE_TAG_THRESHOLD || β > thresholds.VOICE_TAG_THRESHOLD) {
+      } else if (thresholds.VOICE_TAG_ENABLED &&
+                 (β < -thresholds.VOICE_TAG_THRESHOLD || β > thresholds.VOICE_TAG_THRESHOLD)) {
         detected = 'VOICE_TAG';
-      } else if (Math.abs(γ - base.gamma) > thresholds.FOUL_GAMMA_MIN && 
+      } else if (thresholds.FOUL_ENABLED &&
+                 Math.abs(γ - base.gamma) > thresholds.FOUL_GAMMA_MIN &&
                  Math.abs(β - base.beta) > thresholds.FOUL_BETA_MIN) {
         detected = 'FOUL';
-      } else if (γ > base.gamma + thresholds.CORNER_MIN && 
-                 γ < base.gamma + thresholds.CORNER_MAX && 
+      } else if (thresholds.CORNER_ENABLED &&
+                 γ > base.gamma + thresholds.CORNER_MIN &&
+                 γ < base.gamma + thresholds.CORNER_MAX &&
                  Math.abs(β - base.beta) < 12) {
         detected = 'CORNER';
-      } else if (γ < base.gamma - thresholds.OFFSIDE_MIN && 
-                 γ > base.gamma - thresholds.OFFSIDE_MAX && 
+      } else if (thresholds.OFFSIDE_ENABLED &&
+                 γ < base.gamma - thresholds.OFFSIDE_MIN &&
+                 γ > base.gamma - thresholds.OFFSIDE_MAX &&
                  Math.abs(β - base.beta) < 12) {
         detected = 'OFFSIDE';
       }
@@ -251,7 +275,15 @@ export default function Calibration() {
           <div className="space-y-6">
             {/* PASS */}
             <div>
-              <label className="text-sm font-medium mb-2 block">PASS (Flick Forward)</label>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="pass-enabled"
+                  checked={thresholds.PASS_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, PASS_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="pass-enabled" className="text-sm font-medium">PASS (Flick Forward)</label>
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-4">
                   <span className="text-xs text-muted-foreground w-16">Min:</span>
@@ -262,6 +294,7 @@ export default function Calibration() {
                     max={80}
                     step={5}
                     className="flex-1"
+                    disabled={!thresholds.PASS_ENABLED}
                   />
                   <span className="text-sm font-mono w-12">{thresholds.PASS_MIN}°</span>
                 </div>
@@ -274,6 +307,7 @@ export default function Calibration() {
                     max={120}
                     step={5}
                     className="flex-1"
+                    disabled={!thresholds.PASS_ENABLED}
                   />
                   <span className="text-sm font-mono w-12">{thresholds.PASS_MAX}°</span>
                 </div>
@@ -282,7 +316,15 @@ export default function Calibration() {
 
             {/* SHOT */}
             <div>
-              <label className="text-sm font-medium mb-2 block">SHOT (Back Flick)</label>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="shot-enabled"
+                  checked={thresholds.SHOT_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, SHOT_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="shot-enabled" className="text-sm font-medium">SHOT (Back Flick)</label>
+              </div>
               <div className="flex items-center gap-4">
                 <span className="text-xs text-muted-foreground w-16">Min:</span>
                 <Slider
@@ -292,6 +334,7 @@ export default function Calibration() {
                   max={50}
                   step={5}
                   className="flex-1"
+                  disabled={!thresholds.SHOT_ENABLED}
                 />
                 <span className="text-sm font-mono w-12">{thresholds.SHOT_MIN}°</span>
               </div>
@@ -299,7 +342,15 @@ export default function Calibration() {
 
             {/* TACKLE */}
             <div>
-              <label className="text-sm font-medium mb-2 block">TACKLE (Tilt)</label>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="tackle-enabled"
+                  checked={thresholds.TACKLE_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, TACKLE_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="tackle-enabled" className="text-sm font-medium">TACKLE (Tilt)</label>
+              </div>
               <div className="flex items-center gap-4">
                 <span className="text-xs text-muted-foreground w-16">Min:</span>
                 <Slider
@@ -309,6 +360,7 @@ export default function Calibration() {
                   max={80}
                   step={5}
                   className="flex-1"
+                  disabled={!thresholds.TACKLE_ENABLED}
                 />
                 <span className="text-sm font-mono w-12">{thresholds.TACKLE_MIN}°</span>
               </div>
@@ -316,7 +368,15 @@ export default function Calibration() {
 
             {/* VOICE TAG */}
             <div>
-              <label className="text-sm font-medium mb-2 block">VOICE TAG (Upside Hold)</label>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="voicetag-enabled"
+                  checked={thresholds.VOICE_TAG_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, VOICE_TAG_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="voicetag-enabled" className="text-sm font-medium">VOICE TAG (Upside Hold)</label>
+              </div>
               <div className="flex items-center gap-4">
                 <span className="text-xs text-muted-foreground w-16">Threshold:</span>
                 <Slider
@@ -326,6 +386,7 @@ export default function Calibration() {
                   max={150}
                   step={5}
                   className="flex-1"
+                  disabled={!thresholds.VOICE_TAG_ENABLED}
                 />
                 <span className="text-sm font-mono w-12">{thresholds.VOICE_TAG_THRESHOLD}°</span>
               </div>
@@ -333,7 +394,15 @@ export default function Calibration() {
 
             {/* FOUL */}
             <div>
-              <label className="text-sm font-medium mb-2 block">FOUL (Shake)</label>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="foul-enabled"
+                  checked={thresholds.FOUL_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, FOUL_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="foul-enabled" className="text-sm font-medium">FOUL (Shake)</label>
+              </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-4">
                   <span className="text-xs text-muted-foreground w-16">Gamma:</span>
@@ -344,6 +413,7 @@ export default function Calibration() {
                     max={80}
                     step={5}
                     className="flex-1"
+                    disabled={!thresholds.FOUL_ENABLED}
                   />
                   <span className="text-sm font-mono w-12">{thresholds.FOUL_GAMMA_MIN}°</span>
                 </div>
@@ -356,8 +426,91 @@ export default function Calibration() {
                     max={50}
                     step={5}
                     className="flex-1"
+                    disabled={!thresholds.FOUL_ENABLED}
                   />
                   <span className="text-sm font-mono w-12">{thresholds.FOUL_BETA_MIN}°</span>
+                </div>
+              </div>
+            </div>
+
+            {/* CORNER */}
+            <div>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="corner-enabled"
+                  checked={thresholds.CORNER_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, CORNER_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="corner-enabled" className="text-sm font-medium">CORNER (Clockwise Arc)</label>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-muted-foreground w-16">Min:</span>
+                  <Slider
+                    value={[thresholds.CORNER_MIN]}
+                    onValueChange={([val]) => setThresholds({ ...thresholds, CORNER_MIN: val })}
+                    min={10}
+                    max={30}
+                    step={5}
+                    className="flex-1"
+                    disabled={!thresholds.CORNER_ENABLED}
+                  />
+                  <span className="text-sm font-mono w-12">{thresholds.CORNER_MIN}°</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-muted-foreground w-16">Max:</span>
+                  <Slider
+                    value={[thresholds.CORNER_MAX]}
+                    onValueChange={([val]) => setThresholds({ ...thresholds, CORNER_MAX: val })}
+                    min={20}
+                    max={50}
+                    step={5}
+                    className="flex-1"
+                    disabled={!thresholds.CORNER_ENABLED}
+                  />
+                  <span className="text-sm font-mono w-12">{thresholds.CORNER_MAX}°</span>
+                </div>
+              </div>
+            </div>
+
+            {/* OFFSIDE */}
+            <div>
+              <div className="flex items-center mb-2">
+                <Checkbox
+                  id="offside-enabled"
+                  checked={thresholds.OFFSIDE_ENABLED}
+                  onCheckedChange={(checked) => setThresholds({ ...thresholds, OFFSIDE_ENABLED: !!checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="offside-enabled" className="text-sm font-medium">OFFSIDE (Counter-Arc)</label>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-muted-foreground w-16">Min:</span>
+                  <Slider
+                    value={[thresholds.OFFSIDE_MIN]}
+                    onValueChange={([val]) => setThresholds({ ...thresholds, OFFSIDE_MIN: val })}
+                    min={10}
+                    max={30}
+                    step={5}
+                    className="flex-1"
+                    disabled={!thresholds.OFFSIDE_ENABLED}
+                  />
+                  <span className="text-sm font-mono w-12">{thresholds.OFFSIDE_MIN}°</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="text-xs text-muted-foreground w-16">Max:</span>
+                  <Slider
+                    value={[thresholds.OFFSIDE_MAX]}
+                    onValueChange={([val]) => setThresholds({ ...thresholds, OFFSIDE_MAX: val })}
+                    min={20}
+                    max={50}
+                    step={5}
+                    className="flex-1"
+                    disabled={!thresholds.OFFSIDE_ENABLED}
+                  />
+                  <span className="text-sm font-mono w-12">{thresholds.OFFSIDE_MAX}°</span>
                 </div>
               </div>
             </div>
