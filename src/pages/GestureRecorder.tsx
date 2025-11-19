@@ -60,6 +60,9 @@ export default function GestureRecorder() {
         <Button variant="ghost" size="sm" onClick={() => nav('/')} className="gap-2">
           <ArrowLeft className="w-4 h-4" /> Back
         </Button>
+        <Button variant="outline" size="sm" onClick={() => nav('/calibration')} className="gap-2">
+          Calibrate
+        </Button>
         <div className="flex items-center gap-2 text-slate-700 font-semibold">
           <Activity className={`w-4 h-4 ${isActive ? 'text-green-500 animate-pulse' : 'text-slate-400'}`} />
           <span>SOTA Motion Engine</span>
