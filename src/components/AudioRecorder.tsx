@@ -67,7 +67,7 @@ const AudioRecorder = ({ onRecordingComplete, isProcessing }: AudioRecorderProps
 
   // Process chunks every 3 seconds automatically
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: number;
     
     if (isRecording && !isProcessing) {
       interval = setInterval(() => {
