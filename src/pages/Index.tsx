@@ -355,6 +355,13 @@ const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
                 >
                   Gesture Recorder
                 </Button>
+                <Button
+                  onClick={() => navigate('/calibration')}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Calibrate
+                </Button>
               </div>
             </div>
           </div>
