@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Smartphone, AlertCircle, Zap, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
+// Assuming these types exist in your project, otherwise defined locally below
 import { SoccerEvent, SoccerEventType } from '@/types/soccer-events';
 import EventTimeline from '@/components/EventTimeline';
 import { triggerHaptic } from '@/utils/haptic-feedback';
@@ -22,10 +23,10 @@ const CONFIG = {
   HOLD_CORNER_FRAMES: 4,
   HOLD_OFFSIDE_FRAMES: 4,
   HOLD_SUB_FRAMES: 5,
-  LEARNING_DURATION_MS: 2000,  // 2 seconds to learn jitter
-  JITTER_MARGIN: 1.5,           // multiplier for jitter zone
-  PATTERN_WINDOW_MS: 2000,      // 2 seconds for pattern tracking
-  PATTERN_MIN_SAMPLES: 8,       // minimum samples for pattern
+  LEARNING_DURATION_MS: 2000,
+  JITTER_MARGIN: 1.5,
+  PATTERN_WINDOW_MS: 2000,
+  PATTERN_MIN_SAMPLES: 8,
 } as const;
 
 /* ==========================  TYPES  ========================== */
@@ -57,7 +58,20 @@ interface MovementPattern {
   name: string;
   detected: boolean;
   confidence: number;
-  path: string; // SVG path for visualization
+  path: string;
+}
+
+// Local definition to satisfy the missing types in the original code
+interface GestureCapturedEvent extends SoccerEvent {
+  eventSource: 'gesture-capture' | 'pattern-capture';
+  gestureType?: string;
+  soccerEventType: string;
+  patternData?: {
+    path: string;
+    velocity: number;
+    duration: number;
+    samples: number;
+  };
 }
 
 /* ==========================  KALMAN 1-D  ========================== */
@@ -152,96 +166,70 @@ const FRAMES_NEEDED: Record<string, number> = {
   SUBSTITUTION: CONFIG.HOLD_SUB_FRAMES,
 };
 
-/* ==========================  PATTERN DETECTION  ========================== */
+/* ==========================  PATTERN DETECTION HELPERS ========================== */
+// ... (Your pattern detection functions detectCircularMotion, detectFigure8, etc. remain unchanged)
 const detectCircularMotion = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
-  if (points.length < 12) return { detected: false, confidence: 0 };
-  
-  // Calculate center
-  const centerBeta = points.reduce((sum, p) => sum + p.beta, 0) / points.length;
-  const centerGamma = points.reduce((sum, p) => sum + p.gamma, 0) / points.length;
-  
-  // Calculate distances from center
-  const distances = points.map(p => Math.sqrt(Math.pow(p.beta - centerBeta, 2) + Math.pow(p.gamma - centerGamma, 2)));
-  const avgDist = distances.reduce((sum, d) => sum + d, 0) / distances.length;
-  
-  // Check if distances are consistent (circular)
-  const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDist, 2), 0) / distances.length;
-  const consistency = 1 - Math.min(variance / (avgDist * avgDist), 1);
-  
-  // Check if we covered a significant arc
-  const angles = points.map(p => Math.atan2(p.gamma - centerGamma, p.beta - centerBeta));
-  let totalAngle = 0;
-  for (let i = 1; i < angles.length; i++) {
-    let diff = angles[i] - angles[i - 1];
-    if (diff > Math.PI) diff -= 2 * Math.PI;
-    if (diff < -Math.PI) diff += 2 * Math.PI;
-    totalAngle += Math.abs(diff);
-  }
-  
-  const coverage = totalAngle / (2 * Math.PI);
-  const detected = consistency > 0.6 && coverage > 0.5 && avgDist > 15;
-  
-  return { detected, confidence: detected ? Math.min(consistency * coverage, 0.95) : 0 };
-};
-
-const detectFigure8 = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
-  if (points.length < 16) return { detected: false, confidence: 0 };
-  
-  // Split into two halves
-  const mid = Math.floor(points.length / 2);
-  const first = points.slice(0, mid);
-  const second = points.slice(mid);
-  
-  // Check if each half is roughly circular
-  const firstCircle = detectCircularMotion(first);
-  const secondCircle = detectCircularMotion(second);
-  
-  // Check if centers are offset
-  const center1Beta = first.reduce((sum, p) => sum + p.beta, 0) / first.length;
-  const center2Beta = second.reduce((sum, p) => sum + p.beta, 0) / second.length;
-  const offset = Math.abs(center1Beta - center2Beta);
-  
-  const detected = firstCircle.detected && secondCircle.detected && offset > 10;
-  const confidence = detected ? Math.min((firstCircle.confidence + secondCircle.confidence) / 2, 0.95) : 0;
-  
-  return { detected, confidence };
-};
-
-const detectZigzag = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
-  if (points.length < 8) return { detected: false, confidence: 0 };
-  
-  // Find peaks and valleys
-  let peaks = 0;
-  for (let i = 1; i < points.length - 1; i++) {
-    const prev = points[i - 1].gamma;
-    const curr = points[i].gamma;
-    const next = points[i + 1].gamma;
-    
-    if ((curr > prev && curr > next) || (curr < prev && curr < next)) {
-      peaks++;
+    if (points.length < 12) return { detected: false, confidence: 0 };
+    const centerBeta = points.reduce((sum, p) => sum + p.beta, 0) / points.length;
+    const centerGamma = points.reduce((sum, p) => sum + p.gamma, 0) / points.length;
+    const distances = points.map(p => Math.sqrt(Math.pow(p.beta - centerBeta, 2) + Math.pow(p.gamma - centerGamma, 2)));
+    const avgDist = distances.reduce((sum, d) => sum + d, 0) / distances.length;
+    const variance = distances.reduce((sum, d) => sum + Math.pow(d - avgDist, 2), 0) / distances.length;
+    const consistency = 1 - Math.min(variance / (avgDist * avgDist), 1);
+    const angles = points.map(p => Math.atan2(p.gamma - centerGamma, p.beta - centerBeta));
+    let totalAngle = 0;
+    for (let i = 1; i < angles.length; i++) {
+      let diff = angles[i] - angles[i - 1];
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff < -Math.PI) diff += 2 * Math.PI;
+      totalAngle += Math.abs(diff);
     }
-  }
+    const coverage = totalAngle / (2 * Math.PI);
+    const detected = consistency > 0.6 && coverage > 0.5 && avgDist > 15;
+    return { detected, confidence: detected ? Math.min(consistency * coverage, 0.95) : 0 };
+  };
   
-  const detected = peaks >= 3;
-  const confidence = detected ? Math.min(peaks / 5, 0.95) : 0;
+  const detectFigure8 = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+    if (points.length < 16) return { detected: false, confidence: 0 };
+    const mid = Math.floor(points.length / 2);
+    const first = points.slice(0, mid);
+    const second = points.slice(mid);
+    const firstCircle = detectCircularMotion(first);
+    const secondCircle = detectCircularMotion(second);
+    const center1Beta = first.reduce((sum, p) => sum + p.beta, 0) / first.length;
+    const center2Beta = second.reduce((sum, p) => sum + p.beta, 0) / second.length;
+    const offset = Math.abs(center1Beta - center2Beta);
+    const detected = firstCircle.detected && secondCircle.detected && offset > 10;
+    const confidence = detected ? Math.min((firstCircle.confidence + secondCircle.confidence) / 2, 0.95) : 0;
+    return { detected, confidence };
+  };
   
-  return { detected, confidence };
-};
-
-const detectShake = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
-  if (points.length < 6) return { detected: false, confidence: 0 };
+  const detectZigzag = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+    if (points.length < 8) return { detected: false, confidence: 0 };
+    let peaks = 0;
+    for (let i = 1; i < points.length - 1; i++) {
+      const prev = points[i - 1].gamma;
+      const curr = points[i].gamma;
+      const next = points[i + 1].gamma;
+      if ((curr > prev && curr > next) || (curr < prev && curr < next)) {
+        peaks++;
+      }
+    }
+    const detected = peaks >= 3;
+    const confidence = detected ? Math.min(peaks / 5, 0.95) : 0;
+    return { detected, confidence };
+  };
   
-  // Calculate velocity changes
-  let rapidChanges = 0;
-  for (let i = 0; i < points.length; i++) {
-    if (points[i].velocity > 80) rapidChanges++;
-  }
-  
-  const detected = rapidChanges >= 4;
-  const confidence = detected ? Math.min(rapidChanges / 6, 0.95) : 0;
-  
-  return { detected, confidence };
-};
+  const detectShake = (points: PatternPoint[]): { detected: boolean; confidence: number } => {
+    if (points.length < 6) return { detected: false, confidence: 0 };
+    let rapidChanges = 0;
+    for (let i = 0; i < points.length; i++) {
+      if (points[i].velocity > 80) rapidChanges++;
+    }
+    const detected = rapidChanges >= 4;
+    const confidence = detected ? Math.min(rapidChanges / 6, 0.95) : 0;
+    return { detected, confidence };
+  };
 
 /* ==========================  COMPONENT  ========================== */
 const GestureRecorder = () => {
@@ -249,14 +237,17 @@ const GestureRecorder = () => {
   const { toast } = useToast();
   const [isActive, setIsActive] = useState(false);
   const [currentGesture, setCurrentGesture] = useState<string | null>(null);
-  const [events, setEvents] = useState<SoccerEvent[]>([]);
+  // Use GestureCapturedEvent which extends SoccerEvent
+  const [events, setEvents] = useState<GestureCapturedEvent[]>([]);
   const [gyro, setGyro] = useState<Vec3 & { alpha: number | null }>({ x: 0, y: 0, z: 0, alpha: null });
   const [permission, setPermission] = useState(false);
   const [voice, setVoice] = useState(false);
   const [isLearning, setIsLearning] = useState(false);
   const [learningProgress, setLearningProgress] = useState(0);
   const [jitterZone, setJitterZone] = useState<JitterZone | null>(null);
-  const [patternHistory, setPatternHistory] = useState<PatternPoint[]>([]);
+  
+  // FIX: Use Ref for high-frequency pattern history to avoid re-renders in loop
+  const patternHistoryRef = useRef<PatternPoint[]>([]);
   const [detectedPattern, setDetectedPattern] = useState<MovementPattern | null>(null);
   const [thresholds, setThresholds] = useState<ThresholdConfig>(DEFAULT_THRESHOLDS);
 
@@ -275,7 +266,6 @@ const GestureRecorder = () => {
     if (saved) {
       try {
         const loadedThresholds = JSON.parse(saved);
-        // Merge with defaults to ensure new properties are present
         setThresholds({ ...DEFAULT_THRESHOLDS, ...loadedThresholds });
       } catch (e) {
         console.warn('Failed to load thresholds:', e);
@@ -285,50 +275,36 @@ const GestureRecorder = () => {
 
   /* ----------  PERMISSION  ---------- */
   const ask = useCallback(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await (DeviceOrientationEvent as any).requestPermission();
       setPermission(res === 'granted');
       toast({ title: res === 'granted' ? 'Access granted' : 'Access denied', variant: res === 'granted' ? 'default' : 'destructive' });
-    } else setPermission(true);
+    } else {
+        setPermission(true);
+    }
   }, [toast]);
 
-  /* ----------  ADD EVENT  ---------- */
+  /* ----------  ADD EVENT (Unified)  ---------- */
+  const addEvent = useCallback((
+    type: string, 
+    category: 'GESTURE' | 'PATTERN',
+    patternData?: { path: string; velocity: number; duration: number; samples: number },
+    confidence: number = 0.95
+  ) => {
+    const ev: GestureCapturedEvent = {
+      eventSource: category === 'PATTERN' ? 'pattern-capture' : 'gesture-capture',
+      type: type as SoccerEventType, // Cast for compatibility
+      soccerEventType: type,
+      gestureType: category === 'GESTURE' ? 'MOTION' : 'PATTERN', // Simplified
+      timestamp: Date.now(),
+      text: `${type} detected via ${category}`,
+      confidence: confidence,
+      protocolType: 'Player — Event',
+      patternData
+    };
 
-  // Update the add function to create proper GestureCapturedEvent
-const add = useCallback((gestureType: string, soccerEventType: string) => {
-  const ev: GestureCapturedEvent = {
-    eventSource: 'gesture-capture',
-    gestureType: gestureType as 'FLICK_FORWARD' | 'FLICK_BACK' | 'TILT' | 'HOLD_INVERTED',
-    soccerEventType: soccerEventType as 'PASS' | 'SHOT' | 'TACKLE' | 'VOICE_TAG',
-    timestamp: Date.now(),
-    text: `${gestureType} → ${soccerEventType}`,
-    confidence: 0.95,
-  };
-  setEvents((e) => [ev, ...e]);
-  toast({ title: `${soccerEventType} recorded via ${gestureType}` });
-}, [toast]);
-
-// Update pattern detection to create PatternCapturedEvent
-if (best.detected && best.confidence > 0.7) {
-  const patternEvent: PatternCapturedEvent = {
-    eventSource: 'pattern-capture',
-    patternType: best.name as 'CIRCULAR' | 'FIGURE_8' | 'ZIGZAG' | 'SHAKE',
-    soccerEventType: best.name, // or map to actual soccer event
-    patternData: {
-      path: pathData,
-      velocity: updatedHistory[updatedHistory.length - 1].velocity,
-      duration: now - updatedHistory[0].ts,
-      samples: updatedHistory.length,
-    },
-    timestamp: Date.now(),
-    text: `${best.name} pattern detected`,
-    confidence: best.confidence,
-  };
-  setEvents((e) => [patternEvent, ...e]);
-  // ... rest of detection code
-}
-  const add = useCallback((type: SoccerEventType) => {
-    const ev: SoccerEvent = { type, timestamp: Date.now(), text: `${type} detected`, confidence: 0.95, protocolType: 'Player — Event' };
     setEvents((e) => [ev, ...e]);
     toast({ title: `${type} recorded` });
   }, [toast]);
@@ -351,13 +327,11 @@ if (best.detected && best.confidence > 0.7) {
       return;
     }
 
-    // Calculate center (mean)
     const sumBeta = samples.reduce((acc, s) => acc + s.beta, 0);
     const sumGamma = samples.reduce((acc, s) => acc + s.gamma, 0);
     const centerBeta = sumBeta / samples.length;
     const centerGamma = sumGamma / samples.length;
 
-    // Calculate radius (standard deviation * margin)
     const varBeta = samples.reduce((acc, s) => acc + Math.pow(s.beta - centerBeta, 2), 0) / samples.length;
     const varGamma = samples.reduce((acc, s) => acc + Math.pow(s.gamma - centerGamma, 2), 0) / samples.length;
     const radiusBeta = Math.sqrt(varBeta) * CONFIG.JITTER_MARGIN;
@@ -366,7 +340,7 @@ if (best.detected && best.confidence > 0.7) {
     const zone: JitterZone = {
       centerBeta,
       centerGamma,
-      radiusBeta: Math.max(radiusBeta, 5), // minimum 5°
+      radiusBeta: Math.max(radiusBeta, 5),
       radiusGamma: Math.max(radiusGamma, 5),
     };
 
@@ -377,7 +351,7 @@ if (best.detected && best.confidence > 0.7) {
 
   /* ----------  CHECK IF OUTSIDE JITTER ZONE  ---------- */
   const isOutsideJitterZone = useCallback((beta: number, gamma: number): boolean => {
-    if (!jitterZone) return true; // no zone learned yet, allow all
+    if (!jitterZone) return true;
     const deltaBeta = Math.abs(beta - jitterZone.centerBeta);
     const deltaGamma = Math.abs(gamma - jitterZone.centerGamma);
     return deltaBeta > jitterZone.radiusBeta || deltaGamma > jitterZone.radiusGamma;
@@ -411,25 +385,33 @@ if (best.detected && best.confidence > 0.7) {
         if (progress >= 1) {
           finishLearning();
         }
-        return; // don't detect gestures while learning
+        return;
       }
 
       /* Check if outside jitter zone */
       const outsideJitter = isOutsideJitterZone(β, γ);
       if (!outsideJitter) {
         cntRef.current = {};
-        return; // inside jitter zone, ignore
+        // If inside jitter zone, we still track patterns? 
+        // Usually pattern detection wants continuous movement, 
+        // but let's assume we reset if we return to "steady" state
+        // patternHistoryRef.current = []; 
+        // ^ logic choice: do we clear pattern if they stop moving?
+        return; 
       }
 
-      /* Add to pattern history */
-      const prevPoint = patternHistory[patternHistory.length - 1];
+      /* Add to pattern history (Use Ref) */
+      const currentHistory = patternHistoryRef.current;
+      const prevPoint = currentHistory[currentHistory.length - 1];
       const velocity = prevPoint 
         ? Math.sqrt(Math.pow(β - prevPoint.beta, 2) + Math.pow(γ - prevPoint.gamma, 2)) / ((now - prevPoint.ts) / 1000)
         : 0;
       
       const newPoint: PatternPoint = { beta: β, gamma: γ, ts: now, velocity };
-      const updatedHistory = [...patternHistory, newPoint].filter(p => now - p.ts < CONFIG.PATTERN_WINDOW_MS);
-      setPatternHistory(updatedHistory);
+      
+      // Clean old points and add new
+      const updatedHistory = [...currentHistory, newPoint].filter(p => now - p.ts < CONFIG.PATTERN_WINDOW_MS);
+      patternHistoryRef.current = updatedHistory;
 
       /* Check for movement patterns */
       if (updatedHistory.length >= CONFIG.PATTERN_MIN_SAMPLES) {
@@ -438,7 +420,6 @@ if (best.detected && best.confidence > 0.7) {
         const zigzag = detectZigzag(updatedHistory);
         const shake = detectShake(updatedHistory);
 
-        // Find best pattern
         const patterns = [
           { name: 'CIRCULAR', ...circular, enabled: thresholds.CIRCULAR_ENABLED },
           { name: 'FIGURE_8', ...figure8, enabled: thresholds.FIGURE_8_ENABLED },
@@ -446,10 +427,10 @@ if (best.detected && best.confidence > 0.7) {
           { name: 'SHAKE', ...shake, enabled: thresholds.SHAKE_ENABLED },
         ];
         
-        const best = patterns.filter(p => p.enabled).reduce((max, p) => p.confidence > max.confidence ? p : max, { confidence: 0 });
+        const best = patterns.filter(p => p.enabled).reduce((max, p) => p.confidence > max.confidence ? p : max, { confidence: 0, name: '', detected: false, enabled: false });
         
-        if (best.detected && best.confidence > 0.7) {
-          // Generate SVG path for visualization
+        // !!! FIX: This logic block was previously floating outside the useEffect
+        if (best.detected && best.confidence > 0.7 && now > cooldownRef.current) {
           const minBeta = Math.min(...updatedHistory.map(p => p.beta));
           const maxBeta = Math.max(...updatedHistory.map(p => p.beta));
           const minGamma = Math.min(...updatedHistory.map(p => p.gamma));
@@ -469,13 +450,22 @@ if (best.detected && best.confidence > 0.7) {
             path: pathData,
           });
 
-          // Record as event
-          add(best.name as SoccerEventType);
+          // Add Event
+          addEvent(best.name, 'PATTERN', {
+            path: pathData,
+            velocity: updatedHistory[updatedHistory.length - 1].velocity,
+            duration: now - updatedHistory[0].ts,
+            samples: updatedHistory.length,
+          }, best.confidence);
+
           triggerHaptic('medium');
           
           // Clear history after detection
-          setPatternHistory([]);
+          patternHistoryRef.current = [];
+          cooldownRef.current = now + CONFIG.COOLDOWN_MS;
           setTimeout(() => setDetectedPattern(null), 2000);
+          
+          return; // Stop processing simple gestures if pattern found
         }
       }
 
@@ -520,7 +510,7 @@ if (best.detected && best.confidence > 0.7) {
         setVoice(true);
         triggerHaptic('light');
       } else {
-        add(winner as SoccerEventType);
+        addEvent(winner, 'GESTURE');
         setVoice(false);
         triggerHaptic('medium');
       }
@@ -529,7 +519,7 @@ if (best.detected && best.confidence > 0.7) {
 
     window.addEventListener('deviceorientation', onOrient);
     return () => window.removeEventListener('deviceorientation', onOrient);
-  }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, add, patternHistory]);
+  }, [isActive, permission, isLearning, isOutsideJitterZone, finishLearning, addEvent]); // Removed patternHistory from deps
 
   /* ----------  START LEARNING WHEN ACTIVATED  ---------- */
   useEffect(() => {
@@ -551,6 +541,7 @@ if (best.detected && best.confidence > 0.7) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-pitch-green/5">
       <div className="container mx-auto px-4 py-8">
+        {/* UI Render code (Identical to original) */}
         <div className="mb-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="sm" onClick={() => nav('/')} className="gap-2">
@@ -578,7 +569,6 @@ if (best.detected && best.confidence > 0.7) {
           </Card>
         )}
 
-        {/* LEARNING PHASE BANNER */}
         {isLearning && (
           <Card className="p-6 mb-6 border-blue-500 bg-blue-500/5">
             <div className="flex items-start gap-3">
@@ -600,7 +590,6 @@ if (best.detected && best.confidence > 0.7) {
         )}
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {/* COMPACT PHONE ORIENTATION */}
           <Card className="p-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-lg font-semibold">Live Orientation</h2>
@@ -629,7 +618,6 @@ if (best.detected && best.confidence > 0.7) {
             </div>
           </Card>
 
-          {/* CONTROLS */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Controls</h2>
             <Button onClick={toggle} variant={isActive ? 'destructive' : 'default'} size="lg" className="w-full mb-3">
@@ -665,7 +653,6 @@ if (best.detected && best.confidence > 0.7) {
             )}
           </Card>
 
-          {/* GESTURE GUIDE */}
           <Card className="p-6">
             <h2 className="text-xl font-semibold mb-4">Gesture Guide</h2>
             <div className="space-y-2">
@@ -690,7 +677,6 @@ if (best.detected && best.confidence > 0.7) {
           </Card>
         </div>
 
-        {/* PATTERN VISUALIZATION */}
         {detectedPattern && (
           <div className="mt-6">
             <Card className="p-6 border-accent">
@@ -704,7 +690,7 @@ if (best.detected && best.confidence > 0.7) {
                   </p>
                   <div className="flex items-center gap-2 mb-3">
                     <Badge variant="default" className="text-xs">Time-based Detection</Badge>
-                    <Badge variant="outline" className="text-xs">{patternHistory.length} samples</Badge>
+                    <Badge variant="outline" className="text-xs">{patternHistoryRef.current.length} samples</Badge>
                   </div>
                 </div>
                 <svg width="100" height="100" viewBox="0 0 100 100" className="border rounded-lg bg-muted/20">
@@ -716,9 +702,7 @@ if (best.detected && best.confidence > 0.7) {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
-                  {/* Start marker */}
                   <circle cx="10" cy="10" r="3" fill="hsl(var(--primary))" />
-                  {/* End marker */}
                   <circle cx="90" cy="90" r="3" fill="hsl(var(--destructive))" />
                 </svg>
               </div>
