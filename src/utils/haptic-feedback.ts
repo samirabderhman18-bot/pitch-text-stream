@@ -1,38 +1,20 @@
-/**
- * Trigger haptic feedback (vibration) on supported devices
- * @param intensity - 'light' (10ms), 'medium' (50ms), or 'heavy' (100ms)
- */
-export const triggerHaptic = (intensity: 'light' | 'medium' | 'heavy' = 'medium') => {
-  // Check if vibration API is supported
-  if (!navigator.vibrate) {
-    return;
-  }
+export const triggerHaptic = (type: 'light' | 'medium' | 'heavy' | 'success' | 'error') => {
+  if (typeof navigator === 'undefined' || !navigator.vibrate) return;
 
-  const durations = {
-    light: 10,
-    medium: 50,
-    heavy: 100,
-  };
-
-  try {
-    navigator.vibrate(durations[intensity]);
-  } catch (error) {
-    console.warn('Haptic feedback not supported:', error);
-  }
-};
-
-/**
- * Trigger a pattern of haptic feedback
- * @param pattern - Array of [vibrate, pause] durations in milliseconds
- */
-export const triggerHapticPattern = (pattern: number[]) => {
-  if (!navigator.vibrate) {
-    return;
-  }
-
-  try {
-    navigator.vibrate(pattern);
-  } catch (error) {
-    console.warn('Haptic pattern not supported:', error);
+  switch (type) {
+    case 'light':
+s      break;
+    case 'medium':
+      navigator.vibrate(30);
+      break;
+    case 'heavy':
+      navigator.vibrate(50);
+      break;
+    case 'success':
+      navigator.vibrate([10, 30, 10]);
+      break;
+    case 'error':
+      navigator.vibrate([50, 30, 50]);
+      break;
   }
 };
