@@ -150,26 +150,6 @@ const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
     } as TeamEvent;
   }
 };
-  // Convert backend EventData to frontend SoccerEvent format for display
-  const convertToSoccerEvent = (eventData: EventData): SoccerEvent => {
-    let protocolType: SoccerEvent['protocolType'] = 'Player — Event';
-    if (eventData.target_player) {
-      protocolType = 'Player A — Event — Player B';
-    } else if (eventData.team && !eventData.player_name) {
-      protocolType = 'Team — Event';
-    }
-    return {
-      type: eventData.event_type as any,
-      protocolType,
-      playerA: eventData.player_name || '',
-      playerB: eventData.target_player || '',
-      team: eventData.team || '',
-      referee: '',
-      text: eventData.transcription,
-      timestamp: Date.now(),
-      confidence: 0.8,
-    };
-  };
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsProcessing(true);
